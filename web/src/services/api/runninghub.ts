@@ -32,6 +32,7 @@ export type RunningHubGenerationInputs = {
     generateAudio?: boolean;
     watermark?: boolean;
 };
+export type RunningHubMediaFiles = { images?: File[]; videos?: File[]; audios?: File[] };
 
 export type RunningHubNodeInfo = { nodeId: string; fieldName: string; fieldValue: string | number | boolean };
 export type RunningHubTaskState = { status: "pending" } | { status: "completed"; urls: string[] } | { status: "failed"; error: string };
@@ -123,6 +124,42 @@ export async function waitForRunningHubTask(config: RunningHubClientConfig, task
         if (attempt + 1 < attempts) await wait(RUNNINGHUB_POLL_INTERVAL_MS, options?.signal);
     }
     throw new Error(`RunningHub 任务等待超时（taskId: ${taskId}），可继续查询该任务，请勿重新提交`);
+}
+
+export async function createRunningHubGenerationTask(
+    config: RunningHubClientConfig,
+    target: RunningHubTarget,
+    inputs: RunningHubGenerationInputs,
+    media: RunningHubMediaFiles = {},
+    options?: RunningHubRequestOptions,
+) {
+    const prepared = { ...inputs };
+    for (const source of ["images", "videos", "audios"] as const) {
+        const singular = source === "images" ? "image" : source === "videos" ? "video" : "audio";
+        const files = media[source] || [];
+        const usedIndexes = Array.from(new Set(target.fields.filter((field) => field.source === singular).map((field) => field.sourceIndex || 0)));
+        if (!usedIndexes.length) continue;
+        const uploaded = [...(prepared[source] || [])];
+        await Promise.all(
+            usedIndexes.map(async (index) => {
+                if (files[index]) uploaded[index] = await uploadRunningHubMedia(config, files[index], options);
+            }),
+        );
+        prepared[source] = uploaded;
+    }
+    return createRunningHubTask(config, target, buildRunningHubNodeInfoList(target.fields, prepared), options);
+}
+
+export async function runRunningHubGeneration(
+    config: RunningHubClientConfig,
+    target: RunningHubTarget,
+    capability: RunningHubCapability,
+    inputs: RunningHubGenerationInputs,
+    media: RunningHubMediaFiles = {},
+    options?: RunningHubRequestOptions,
+) {
+    const taskId = await createRunningHubGenerationTask(config, target, inputs, media, options);
+    return waitForRunningHubTask(config, taskId, capability, options);
 }
 
 export function parseRunningHubTargetInput(input: string, explicitKind?: RunningHubTargetKind) {

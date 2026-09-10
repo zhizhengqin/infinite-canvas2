@@ -1,8 +1,9 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
+import { runRunningHubGeneration } from "./runninghub";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -721,9 +722,20 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, selectedModel);
+    if (requestConfig.apiFormat === "runninghub") {
+        const target = resolveRunningHubTarget(config, selectedModel);
+        if (!target) throw new Error("RunningHub 生成目标未配置");
+        const urls = await runRunningHubGeneration(requestConfig, target, "image", {
+            prompt: withSystemPrompt(requestConfig, prompt),
+            ratio: config.size,
+            resolution: config.quality,
+        }, {}, options);
+        return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -780,10 +792,25 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, selectedModel);
+    if (requestConfig.apiFormat === "runninghub") {
+        const target = resolveRunningHubTarget(config, selectedModel);
+        if (!target) throw new Error("RunningHub 生成目标未配置");
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const urls = await runRunningHubGeneration(
+            requestConfig,
+            target,
+            "image",
+            { prompt: withSystemPrompt(requestConfig, requestPrompt), ratio: config.size, resolution: config.quality },
+            { images: files },
+            options,
+        );
+        return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);

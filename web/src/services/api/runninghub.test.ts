@@ -236,3 +236,97 @@ describe("RunningHub HTTP client", () => {
         ).rejects.toThrow("invalid [REDACTED]");
     });
 });
+
+describe("image and video service dispatch", () => {
+    test("routes the selected RunningHub image target through create and query", async () => {
+        installBrowserStorage();
+        const originalFetch = globalThis.fetch;
+        const requests: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request) => {
+            const url = String(input);
+            requests.push(url);
+            if (url.endsWith("/task/openapi/create")) return jsonResponse({ code: 0, msg: "success", data: { taskId: "image-task", taskStatus: "QUEUED" } });
+            return jsonResponse({ taskId: "image-task", status: "SUCCESS", errorCode: "", errorMessage: "", results: [{ url: "https://cdn.example/a.png", outputType: "png" }, { url: "https://cdn.example/b.jpg", outputType: "jpg" }] });
+        }) as typeof fetch;
+        try {
+            const { requestGeneration } = await import("./image");
+            const config = await runningHubConfig("image");
+            expect(await requestGeneration(config, "cinematic portrait")).toEqual([
+                { id: expect.any(String), dataUrl: "https://cdn.example/a.png" },
+                { id: expect.any(String), dataUrl: "https://cdn.example/b.jpg" },
+            ]);
+            expect(requests.filter((url) => url.endsWith("/task/openapi/create"))).toHaveLength(1);
+            expect(requests.filter((url) => url.endsWith("/openapi/v2/query"))).toHaveLength(1);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    test("creates one RunningHub video task and polls the same task", async () => {
+        installBrowserStorage();
+        const originalFetch = globalThis.fetch;
+        const bodies: unknown[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            bodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+            if (url.endsWith("/task/openapi/ai-app/run")) return jsonResponse({ code: 0, msg: "success", data: { taskId: "video-task", taskStatus: "QUEUED" } });
+            return jsonResponse({ taskId: "video-task", status: "SUCCESS", errorCode: "", errorMessage: "", results: [{ url: "https://cdn.example/result.mp4", outputType: "mp4" }] });
+        }) as typeof fetch;
+        try {
+            const { createVideoGenerationTask, pollVideoGenerationTask } = await import("./video");
+            const config = await runningHubConfig("video", "app");
+            const task = await createVideoGenerationTask(config, "slow camera move");
+            expect(task).toEqual({ id: "video-task", provider: "runninghub", model: config.model });
+            expect(await pollVideoGenerationTask(config, task)).toEqual({ status: "completed", result: { url: "https://cdn.example/result.mp4", mimeType: "video/mp4" } });
+            expect(bodies).toEqual([
+                { apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "slow camera move" }] },
+                { taskId: "video-task" },
+            ]);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+});
+
+function installBrowserStorage() {
+    if (globalThis.localStorage) return;
+    const values = new Map<string, string>();
+    Object.defineProperty(globalThis, "localStorage", {
+        configurable: true,
+        value: {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => values.set(key, value),
+            removeItem: (key: string) => values.delete(key),
+            clear: () => values.clear(),
+            key: (index: number) => Array.from(values.keys())[index] ?? null,
+            get length() {
+                return values.size;
+            },
+        },
+    });
+}
+
+async function runningHubConfig(capability: "image" | "video", kind: "workflow" | "app" = "workflow") {
+    const { createModelChannel, defaultConfig, encodeChannelModel } = await import("@/stores/use-config-store");
+    const name = capability === "image" ? "RunningHub image" : "RunningHub video";
+    const channel = createModelChannel({
+        id: "runninghub",
+        name: "RunningHub",
+        baseUrl: "https://www.runninghub.cn",
+        apiKey: "member-key",
+        apiFormat: "runninghub",
+        models: [
+            {
+                name,
+                capability,
+                runningHub: {
+                    kind,
+                    targetId: kind === "workflow" ? "1904136902449209346" : "1877265245566922753",
+                    fields: [{ nodeId: "1", fieldName: "prompt", fieldType: "TEXT", label: "Prompt", defaultValue: "", source: "prompt", required: true }],
+                },
+            },
+        ],
+    });
+    const selected = encodeChannelModel(channel.id, name);
+    return { ...defaultConfig, channels: [channel], models: [selected], model: selected, imageModel: selected, videoModel: selected };
+}

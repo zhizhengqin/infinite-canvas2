@@ -9,6 +9,7 @@ import {
     parseRunningHubTargetInput,
     queryRunningHubTask,
     uploadRunningHubMedia,
+    validateRunningHubImportInput,
     waitForRunningHubTask,
     type RunningHubField,
 } from "./runninghub";
@@ -33,6 +34,21 @@ describe("parseRunningHubTargetInput", () => {
     test("rejects foreign domains and malformed IDs", () => {
         expect(() => parseRunningHubTargetInput("https://example.com/workflow/1904136902449209346")).toThrow("RunningHub");
         expect(() => parseRunningHubTargetInput("https://www.runninghub.cn/workflow/not-a-number")).toThrow("链接");
+    });
+});
+
+describe("validateRunningHubImportInput", () => {
+    test("rejects missing credentials before metadata access", () => {
+        expect(() => validateRunningHubImportInput({ apiKey: "", input: "1904136902449209346", explicitKind: "workflow", name: "Storyboard", existingNames: [] })).toThrow("会员 API Key");
+    });
+
+    test("rejects invalid links and duplicate display names", () => {
+        expect(() => validateRunningHubImportInput({ apiKey: "member-key", input: "https://example.com/workflow/1", explicitKind: "workflow", name: "Storyboard", existingNames: [] })).toThrow("RunningHub");
+        expect(() => validateRunningHubImportInput({ apiKey: "member-key", input: "1904136902449209346", explicitKind: "workflow", name: "Storyboard", existingNames: ["Storyboard"] })).toThrow("重复");
+    });
+
+    test("returns the parsed target and trimmed name", () => {
+        expect(validateRunningHubImportInput({ apiKey: " member-key ", input: "1904136902449209346", explicitKind: "workflow", name: " Storyboard ", existingNames: [] })).toEqual({ kind: "workflow", targetId: "1904136902449209346", name: "Storyboard" });
     });
 });
 
@@ -117,7 +133,15 @@ describe("normalizeRunningHubTaskResponse", () => {
         expect(normalizeRunningHubTaskResponse({ taskId: "t1", status: "FAILED", errorMessage: "node failed", results: null }, "image")).toEqual({ status: "failed", error: "node failed" });
         expect(
             normalizeRunningHubTaskResponse(
-                { taskId: "t1", status: "SUCCESS", results: [{ url: "https://cdn.example/result.mp4", outputType: "mp4" }, { url: "https://cdn.example/a.jpg", outputType: "jpg" }, { url: "https://cdn.example/b.png", outputType: "png" }] },
+                {
+                    taskId: "t1",
+                    status: "SUCCESS",
+                    results: [
+                        { url: "https://cdn.example/result.mp4", outputType: "mp4" },
+                        { url: "https://cdn.example/a.jpg", outputType: "jpg" },
+                        { url: "https://cdn.example/b.png", outputType: "png" },
+                    ],
+                },
                 "image",
             ),
         ).toEqual({ status: "completed", urls: ["https://cdn.example/a.jpg", "https://cdn.example/b.png"] });
@@ -216,11 +240,7 @@ describe("RunningHub HTTP client", () => {
         const state = await waitForRunningHubTask(client, "task-one", "image", {
             fetchImpl: async () => {
                 queryCount += 1;
-                return jsonResponse(
-                    queryCount === 1
-                        ? { taskId: "task-one", status: "RUNNING", results: null }
-                        : { taskId: "task-one", status: "SUCCESS", results: [{ url: "https://cdn.example/result.png", outputType: "png" }] },
-                );
+                return jsonResponse(queryCount === 1 ? { taskId: "task-one", status: "RUNNING", results: null } : { taskId: "task-one", status: "SUCCESS", results: [{ url: "https://cdn.example/result.png", outputType: "png" }] });
             },
             delayImpl: async () => undefined,
         });
@@ -246,7 +266,16 @@ describe("image and video service dispatch", () => {
             const url = String(input);
             requests.push(url);
             if (url.endsWith("/task/openapi/create")) return jsonResponse({ code: 0, msg: "success", data: { taskId: "image-task", taskStatus: "QUEUED" } });
-            return jsonResponse({ taskId: "image-task", status: "SUCCESS", errorCode: "", errorMessage: "", results: [{ url: "https://cdn.example/a.png", outputType: "png" }, { url: "https://cdn.example/b.jpg", outputType: "jpg" }] });
+            return jsonResponse({
+                taskId: "image-task",
+                status: "SUCCESS",
+                errorCode: "",
+                errorMessage: "",
+                results: [
+                    { url: "https://cdn.example/a.png", outputType: "png" },
+                    { url: "https://cdn.example/b.jpg", outputType: "jpg" },
+                ],
+            });
         }) as typeof fetch;
         try {
             const { requestGeneration } = await import("./image");
@@ -278,10 +307,7 @@ describe("image and video service dispatch", () => {
             const task = await createVideoGenerationTask(config, "slow camera move");
             expect(task).toEqual({ id: "video-task", provider: "runninghub", model: config.model });
             expect(await pollVideoGenerationTask(config, task)).toEqual({ status: "completed", result: { url: "https://cdn.example/result.mp4", mimeType: "video/mp4" } });
-            expect(bodies).toEqual([
-                { apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "slow camera move" }] },
-                { taskId: "video-task" },
-            ]);
+            expect(bodies).toEqual([{ apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "slow camera move" }] }, { taskId: "video-task" }]);
         } finally {
             globalThis.fetch = originalFetch;
         }

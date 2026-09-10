@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
+import { RunningHubTargetManager } from "./runninghub-target-manager";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
 
@@ -17,6 +18,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
+        { label: "RunningHub", value: "runninghub" },
     ];
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
@@ -47,6 +49,9 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         onSave({ ...draft, name: draft.name.trim() || t("config.channels.unnamed"), models: normalizeChannelModels(draft.models) });
         onClose();
     };
+    const runningHubReady =
+        draft.apiFormat !== "runninghub" ||
+        (Boolean(draft.baseUrl.trim() && draft.apiKey.trim() && draft.models.length) && draft.models.every((model) => Boolean(model.name.trim() && model.runningHub)) && new Set(draft.models.map((model) => model.name.trim())).size === draft.models.length);
 
     return (
         <Drawer
@@ -58,7 +63,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             extra={
                 <Space>
                     <Button onClick={onClose}>{t("common.cancel")}</Button>
-                    <Button type="primary" onClick={save}>
+                    <Button type="primary" disabled={!runningHubReady} onClick={save}>
                         {t("common.save")}
                     </Button>
                 </Space>
@@ -78,52 +83,60 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
                 </label>
                 <label className="block md:col-span-2">
-                    <span className="mb-1 block text-sm font-medium">API Key</span>
-                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    <span className="mb-1 block text-sm font-medium">{draft.apiFormat === "runninghub" ? t("config.channelEditor.runningHub.memberKey") : "API Key"}</span>
+                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={draft.apiFormat === "runninghub" ? t("config.channelEditor.runningHub.keyPlaceholder") : "sk-..."} />
                 </label>
             </div>
 
-            <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
-                    <div className="mt-0.5 text-xs text-stone-500">{t("config.channelEditor.modelDescription", { count: draft.models.length })}</div>
-                </div>
-                <Button type="primary" icon={<ListPlus className="size-4" />} onClick={() => setSelectOpen(true)}>
-                    {t("config.channelEditor.selectModels")}
-                </Button>
-            </div>
-
-            <div className="space-y-2 rounded-lg border border-stone-200 p-2 dark:border-stone-800">
-                {draft.models.length ? (
-                    draft.models.map((model) => (
-                        <div key={model.name} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
-                            <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>
-                                {model.name}
-                            </span>
-                            <div className="flex shrink-0 items-center gap-2">
-                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
-                                    {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
-                                </Button>
-                                <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
-                            </div>
+            {draft.apiFormat === "runninghub" ? (
+                <RunningHubTargetManager channel={draft} onModelsChange={setModels} />
+            ) : (
+                <>
+                    <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
+                            <div className="mt-0.5 text-xs text-stone-500">{t("config.channelEditor.modelDescription", { count: draft.models.length })}</div>
                         </div>
-                    ))
-                ) : (
-                    <div className="px-2 py-8 text-center text-sm text-stone-500">{t("config.channelEditor.empty")}</div>
-                )}
-            </div>
+                        <Button type="primary" icon={<ListPlus className="size-4" />} onClick={() => setSelectOpen(true)}>
+                            {t("config.channelEditor.selectModels")}
+                        </Button>
+                    </div>
 
-            <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
+                    <div className="space-y-2 rounded-lg border border-stone-200 p-2 dark:border-stone-800">
+                        {draft.models.length ? (
+                            draft.models.map((model) => (
+                                <div key={model.name} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
+                                    <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>
+                                        {model.name}
+                                    </span>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
+                                        <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
+                                            {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
+                                        </Button>
+                                        <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="px-2 py-8 text-center text-sm text-stone-500">{t("config.channelEditor.empty")}</div>
+                        )}
+                    </div>
+                </>
+            )}
 
-            <ModelScriptEditor
-                open={Boolean(scriptTarget)}
-                capability={scriptTarget?.capability || "text"}
-                modelName={scriptTarget?.name || ""}
-                value={scriptTarget?.value || ""}
-                onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
-                onClose={() => setScriptTarget(null)}
-            />
+            {draft.apiFormat !== "runninghub" ? <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} /> : null}
+
+            {draft.apiFormat !== "runninghub" ? (
+                <ModelScriptEditor
+                    open={Boolean(scriptTarget)}
+                    capability={scriptTarget?.capability || "text"}
+                    modelName={scriptTarget?.name || ""}
+                    value={scriptTarget?.value || ""}
+                    onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
+                    onClose={() => setScriptTarget(null)}
+                />
+            ) : null}
         </Drawer>
     );
 }

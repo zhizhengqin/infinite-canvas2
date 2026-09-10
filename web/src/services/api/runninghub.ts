@@ -53,18 +53,8 @@ export async function fetchRunningHubTarget(config: RunningHubClientConfig, kind
     assertClientConfig(config);
     const payload =
         kind === "app"
-            ? await requestJson(
-                  config,
-                  `/api/webapp/apiCallDemo?${new URLSearchParams({ apiKey: config.apiKey, webappId: targetId })}`,
-                  { headers: authHeaders(config) },
-                  options,
-              )
-            : await requestJson(
-                  config,
-                  "/api/openapi/getJsonApiFormat",
-                  { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, workflowId: targetId }) },
-                  options,
-              );
+            ? await requestJson(config, `/api/webapp/apiCallDemo?${new URLSearchParams({ apiKey: config.apiKey, webappId: targetId })}`, { headers: authHeaders(config) }, options)
+            : await requestJson(config, "/api/openapi/getJsonApiFormat", { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, workflowId: targetId }) }, options);
     const data = unwrapPayload(payload);
     const name = kind === "app" ? stringValue(data.webappName) || `app-${targetId}` : `workflow-${targetId}`;
     return { name, target: { kind, targetId, fields: normalizeRunningHubFields(payload) } satisfies RunningHubTarget };
@@ -81,21 +71,11 @@ export async function uploadRunningHubMedia(config: RunningHubClientConfig, file
     return fileName;
 }
 
-export async function createRunningHubTask(
-    config: RunningHubClientConfig,
-    target: RunningHubTarget,
-    nodeInfoList: RunningHubNodeInfo[],
-    options?: RunningHubRequestOptions,
-) {
+export async function createRunningHubTask(config: RunningHubClientConfig, target: RunningHubTarget, nodeInfoList: RunningHubNodeInfo[], options?: RunningHubRequestOptions) {
     assertClientConfig(config);
     const targetField = target.kind === "workflow" ? { workflowId: target.targetId } : { webappId: target.targetId };
     const path = target.kind === "workflow" ? "/task/openapi/create" : "/task/openapi/ai-app/run";
-    const payload = await requestJson(
-        config,
-        path,
-        { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, ...targetField, nodeInfoList }) },
-        options,
-    );
+    const payload = await requestJson(config, path, { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, ...targetField, nodeInfoList }) }, options);
     const data = unwrapPayload(payload);
     const taskId = stringValue(data.taskId);
     if (!taskId) throw new Error("RunningHub 未返回任务 ID");
@@ -104,12 +84,7 @@ export async function createRunningHubTask(
 
 export async function queryRunningHubTask(config: RunningHubClientConfig, taskId: string, capability: RunningHubCapability, options?: RunningHubRequestOptions) {
     assertClientConfig(config);
-    const payload = await requestJson(
-        config,
-        "/openapi/v2/query",
-        { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ taskId }) },
-        options,
-    );
+    const payload = await requestJson(config, "/openapi/v2/query", { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ taskId }) }, options);
     return normalizeRunningHubTaskResponse(payload, capability);
 }
 
@@ -126,13 +101,7 @@ export async function waitForRunningHubTask(config: RunningHubClientConfig, task
     throw new Error(`RunningHub 任务等待超时（taskId: ${taskId}），可继续查询该任务，请勿重新提交`);
 }
 
-export async function createRunningHubGenerationTask(
-    config: RunningHubClientConfig,
-    target: RunningHubTarget,
-    inputs: RunningHubGenerationInputs,
-    media: RunningHubMediaFiles = {},
-    options?: RunningHubRequestOptions,
-) {
+export async function createRunningHubGenerationTask(config: RunningHubClientConfig, target: RunningHubTarget, inputs: RunningHubGenerationInputs, media: RunningHubMediaFiles = {}, options?: RunningHubRequestOptions) {
     const prepared = { ...inputs };
     for (const source of ["images", "videos", "audios"] as const) {
         const singular = source === "images" ? "image" : source === "videos" ? "video" : "audio";
@@ -150,14 +119,7 @@ export async function createRunningHubGenerationTask(
     return createRunningHubTask(config, target, buildRunningHubNodeInfoList(target.fields, prepared), options);
 }
 
-export async function runRunningHubGeneration(
-    config: RunningHubClientConfig,
-    target: RunningHubTarget,
-    capability: RunningHubCapability,
-    inputs: RunningHubGenerationInputs,
-    media: RunningHubMediaFiles = {},
-    options?: RunningHubRequestOptions,
-) {
+export async function runRunningHubGeneration(config: RunningHubClientConfig, target: RunningHubTarget, capability: RunningHubCapability, inputs: RunningHubGenerationInputs, media: RunningHubMediaFiles = {}, options?: RunningHubRequestOptions) {
     const taskId = await createRunningHubGenerationTask(config, target, inputs, media, options);
     return waitForRunningHubTask(config, taskId, capability, options);
 }
@@ -178,6 +140,15 @@ export function parseRunningHubTargetInput(input: string, explicitKind?: Running
     const match = url.pathname.match(/^\/(workflow|ai-detail)\/(\d+)(?:\/|$)/);
     if (!match) throw new Error("无法识别 RunningHub 链接中的目标 ID");
     return { kind: match[1] === "workflow" ? ("workflow" as const) : ("app" as const), targetId: match[2] };
+}
+
+export function validateRunningHubImportInput(input: { apiKey: string; input: string; explicitKind?: RunningHubTargetKind; name: string; existingNames: string[] }) {
+    if (!input.apiKey.trim()) throw new Error("请先填写 RunningHub 会员 API Key");
+    const parsed = parseRunningHubTargetInput(input.input, input.explicitKind);
+    const name = input.name.trim();
+    if (!name) throw new Error("请填写条目名称");
+    if (input.existingNames.some((item) => item.trim() === name)) throw new Error(`条目名称重复：${name}`);
+    return { ...parsed, name };
 }
 
 export function normalizeRunningHubFields(payload: unknown): RunningHubField[] {
@@ -229,13 +200,12 @@ export function normalizeRunningHubTaskResponse(payload: unknown, capability: Ru
         return { status: "failed", error: stringValue(record.errorMessage || record.failedReason || record.msg) || "RunningHub 任务失败" };
     }
     if (!["SUCCESS", "SUCCEEDED", "COMPLETED"].includes(status)) return { status: "pending" };
-    const urls = (Array.isArray(record.results) ? record.results : [])
-        .flatMap((item) => {
-            if (!isRecord(item)) return [];
-            const url = stringValue(item.url || item.fileUrl || item.download_url);
-            const outputType = stringValue(item.outputType || item.fileType || item.type).toLowerCase();
-            return url && mediaMatches(url, outputType, capability) ? [url] : [];
-        });
+    const urls = (Array.isArray(record.results) ? record.results : []).flatMap((item) => {
+        if (!isRecord(item)) return [];
+        const url = stringValue(item.url || item.fileUrl || item.download_url);
+        const outputType = stringValue(item.outputType || item.fileType || item.type).toLowerCase();
+        return url && mediaMatches(url, outputType, capability) ? [url] : [];
+    });
     if (!urls.length) return { status: "failed", error: `任务成功但没有返回${capability === "image" ? "图片" : "视频"}` };
     return { status: "completed", urls: capability === "video" ? urls.slice(0, 1) : urls };
 }

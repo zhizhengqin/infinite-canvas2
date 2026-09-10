@@ -35,8 +35,95 @@ export type RunningHubGenerationInputs = {
 
 export type RunningHubNodeInfo = { nodeId: string; fieldName: string; fieldValue: string | number | boolean };
 export type RunningHubTaskState = { status: "pending" } | { status: "completed"; urls: string[] } | { status: "failed"; error: string };
+export type RunningHubClientConfig = { baseUrl: string; apiKey: string; proxyEnabled?: boolean; proxyUrl?: string };
+export type RunningHubFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+export type RunningHubRequestOptions = {
+    signal?: AbortSignal;
+    fetchImpl?: RunningHubFetch;
+    delayImpl?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+    maxAttempts?: number;
+};
 
 type UnknownRecord = Record<string, unknown>;
+const RUNNINGHUB_POLL_INTERVAL_MS = 5_000;
+const RUNNINGHUB_MAX_POLL_ATTEMPTS = 360;
+
+export async function fetchRunningHubTarget(config: RunningHubClientConfig, kind: RunningHubTargetKind, targetId: string, options?: RunningHubRequestOptions) {
+    assertClientConfig(config);
+    const payload =
+        kind === "app"
+            ? await requestJson(
+                  config,
+                  `/api/webapp/apiCallDemo?${new URLSearchParams({ apiKey: config.apiKey, webappId: targetId })}`,
+                  { headers: authHeaders(config) },
+                  options,
+              )
+            : await requestJson(
+                  config,
+                  "/api/openapi/getJsonApiFormat",
+                  { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, workflowId: targetId }) },
+                  options,
+              );
+    const data = unwrapPayload(payload);
+    const name = kind === "app" ? stringValue(data.webappName) || `app-${targetId}` : `workflow-${targetId}`;
+    return { name, target: { kind, targetId, fields: normalizeRunningHubFields(payload) } satisfies RunningHubTarget };
+}
+
+export async function uploadRunningHubMedia(config: RunningHubClientConfig, file: File, options?: RunningHubRequestOptions) {
+    assertClientConfig(config);
+    const body = new FormData();
+    body.set("file", file);
+    const payload = await requestJson(config, "/openapi/v2/media/upload/binary", { method: "POST", headers: authHeaders(config), body }, options);
+    const data = unwrapPayload(payload);
+    const fileName = stringValue(data.fileName);
+    if (!fileName) throw new Error("RunningHub 上传成功但未返回 fileName");
+    return fileName;
+}
+
+export async function createRunningHubTask(
+    config: RunningHubClientConfig,
+    target: RunningHubTarget,
+    nodeInfoList: RunningHubNodeInfo[],
+    options?: RunningHubRequestOptions,
+) {
+    assertClientConfig(config);
+    const targetField = target.kind === "workflow" ? { workflowId: target.targetId } : { webappId: target.targetId };
+    const path = target.kind === "workflow" ? "/task/openapi/create" : "/task/openapi/ai-app/run";
+    const payload = await requestJson(
+        config,
+        path,
+        { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, ...targetField, nodeInfoList }) },
+        options,
+    );
+    const data = unwrapPayload(payload);
+    const taskId = stringValue(data.taskId);
+    if (!taskId) throw new Error("RunningHub 未返回任务 ID");
+    return taskId;
+}
+
+export async function queryRunningHubTask(config: RunningHubClientConfig, taskId: string, capability: RunningHubCapability, options?: RunningHubRequestOptions) {
+    assertClientConfig(config);
+    const payload = await requestJson(
+        config,
+        "/openapi/v2/query",
+        { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ taskId }) },
+        options,
+    );
+    return normalizeRunningHubTaskResponse(payload, capability);
+}
+
+export async function waitForRunningHubTask(config: RunningHubClientConfig, taskId: string, capability: RunningHubCapability, options?: RunningHubRequestOptions) {
+    const attempts = options?.maxAttempts || RUNNINGHUB_MAX_POLL_ATTEMPTS;
+    const wait = options?.delayImpl || abortableDelay;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const state = await queryRunningHubTask(config, taskId, capability, options);
+        if (state.status === "completed") return state.urls;
+        if (state.status === "failed") throw new Error(state.error);
+        if (attempt + 1 < attempts) await wait(RUNNINGHUB_POLL_INTERVAL_MS, options?.signal);
+    }
+    throw new Error(`RunningHub 任务等待超时（taskId: ${taskId}），可继续查询该任务，请勿重新提交`);
+}
 
 export function parseRunningHubTargetInput(input: string, explicitKind?: RunningHubTargetKind) {
     const value = input.trim();
@@ -120,6 +207,73 @@ function unwrapPayload(payload: unknown): UnknownRecord {
     if (!isRecord(payload)) throw new Error("RunningHub 元数据格式无效");
     if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0") throw new Error(stringValue(payload.msg || payload.message) || "RunningHub 请求失败");
     return isRecord(payload.data) ? payload.data : payload;
+}
+
+async function requestJson(config: RunningHubClientConfig, path: string, init: RequestInit, options?: RunningHubRequestOptions) {
+    const fetchImpl = options?.fetchImpl || fetch;
+    let response: Response;
+    try {
+        response = await fetchImpl(withClientProxy(config, runningHubUrl(config.baseUrl, path)), { ...init, signal: options?.signal });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(redactKey(error instanceof Error ? error.message : "RunningHub 网络请求失败", config.apiKey));
+    }
+    const text = await response.text();
+    let payload: unknown = {};
+    if (text) {
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            throw new Error(redactKey(text.slice(0, 300), config.apiKey));
+        }
+    }
+    const record = isRecord(payload) ? payload : {};
+    if (!response.ok || (record.code !== undefined && record.code !== 0 && record.code !== "0")) {
+        throw new Error(redactKey(stringValue(record.msg || record.message || record.errorMessage) || `RunningHub 请求失败（HTTP ${response.status}）`, config.apiKey));
+    }
+    return payload;
+}
+
+function authHeaders(config: RunningHubClientConfig) {
+    return { Authorization: `Bearer ${config.apiKey}` };
+}
+
+function jsonHeaders(config: RunningHubClientConfig) {
+    return { ...authHeaders(config), "Content-Type": "application/json" };
+}
+
+function runningHubUrl(baseUrl: string, path: string) {
+    return `${baseUrl.trim().replace(/\/+$/, "")}${path}`;
+}
+
+function withClientProxy(config: RunningHubClientConfig, url: string) {
+    if (!config.proxyEnabled || !config.proxyUrl?.trim()) return url;
+    const rawBase = config.proxyUrl.trim().replace(/\/+$/, "");
+    const base = /^https?:\/\//i.test(rawBase) ? rawBase : `http://${rawBase}`;
+    return url.startsWith(`${base}/`) ? url : `${base}/${url}`;
+}
+
+function assertClientConfig(config: RunningHubClientConfig) {
+    if (!config.baseUrl.trim()) throw new Error("请先配置 RunningHub Base URL");
+    if (!config.apiKey.trim()) throw new Error("请先配置 RunningHub 会员 API Key");
+}
+
+function redactKey(message: string, apiKey: string) {
+    return apiKey ? message.split(apiKey).join("[REDACTED]") : message;
+}
+
+function abortableDelay(milliseconds: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(resolve, milliseconds);
+        signal?.addEventListener(
+            "abort",
+            () => {
+                clearTimeout(timeout);
+                reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+        );
+    });
 }
 
 function unwrapQueryPayload(payload: unknown): UnknownRecord {

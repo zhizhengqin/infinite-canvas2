@@ -2,11 +2,22 @@ import { describe, expect, test } from "bun:test";
 
 import {
     buildRunningHubNodeInfoList,
+    createRunningHubTask,
+    fetchRunningHubTarget,
     normalizeRunningHubFields,
     normalizeRunningHubTaskResponse,
     parseRunningHubTargetInput,
+    queryRunningHubTask,
+    uploadRunningHubMedia,
+    waitForRunningHubTask,
     type RunningHubField,
 } from "./runninghub";
+
+const client = { baseUrl: "https://www.runninghub.cn", apiKey: "member-key" };
+
+function jsonResponse(value: unknown, status = 200) {
+    return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+}
 
 describe("parseRunningHubTargetInput", () => {
     test("parses official workflow and AI app links", () => {
@@ -117,5 +128,111 @@ describe("normalizeRunningHubTaskResponse", () => {
             status: "failed",
             error: "任务成功但没有返回图片",
         });
+    });
+});
+
+describe("RunningHub HTTP client", () => {
+    test("loads AI app metadata with official query parameters and bearer auth", async () => {
+        const requests: Array<{ url: string; init?: RequestInit }> = [];
+        const result = await fetchRunningHubTarget(client, "app", "1877265245566922753", {
+            fetchImpl: async (input, init) => {
+                requests.push({ url: String(input), init });
+                return jsonResponse({ code: 0, msg: "success", data: { webappName: "我的应用", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "", fieldData: "", fieldType: "STRING", description: "提示词" }] } });
+            },
+        });
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0].url).toBe("https://www.runninghub.cn/api/webapp/apiCallDemo?apiKey=member-key&webappId=1877265245566922753");
+        expect(requests[0].init?.headers).toEqual({ Authorization: "Bearer member-key" });
+        expect(result.name).toBe("我的应用");
+        expect(result.target.kind).toBe("app");
+        expect(result.target.fields[0].source).toBe("prompt");
+    });
+
+    test("loads workflow JSON with the official POST body", async () => {
+        const requests: Array<{ url: string; init?: RequestInit }> = [];
+        const result = await fetchRunningHubTarget(client, "workflow", "1904136902449209346", {
+            fetchImpl: async (input, init) => {
+                requests.push({ url: String(input), init });
+                return jsonResponse({ code: 0, msg: "SUCCESS", data: { prompt: JSON.stringify({ "6": { class_type: "CLIPTextEncode", inputs: { text: "panda" }, _meta: { title: "Prompt" } } }) } });
+            },
+        });
+
+        expect(requests[0].url).toBe("https://www.runninghub.cn/api/openapi/getJsonApiFormat");
+        expect(requests[0].init?.method).toBe("POST");
+        expect(JSON.parse(String(requests[0].init?.body))).toEqual({ apiKey: "member-key", workflowId: "1904136902449209346" });
+        expect(result.name).toBe("workflow-1904136902449209346");
+        expect(result.target.fields[0].fieldName).toBe("text");
+    });
+
+    test("uploads binary media and returns the node fileName", async () => {
+        let request: { url: string; init?: RequestInit } | undefined;
+        const file = new File(["image"], "frame.png", { type: "image/png" });
+        const fileName = await uploadRunningHubMedia(client, file, {
+            fetchImpl: async (input, init) => {
+                request = { url: String(input), init };
+                return jsonResponse({ code: 0, message: "success", data: { type: "image", download_url: "https://cdn.example/frame.png", fileName: "openapi/frame.png", size: "5" } });
+            },
+        });
+
+        expect(request?.url).toBe("https://www.runninghub.cn/openapi/v2/media/upload/binary");
+        expect(request?.init?.method).toBe("POST");
+        expect(request?.init?.headers).toEqual({ Authorization: "Bearer member-key" });
+        const uploaded = (request?.init?.body as FormData).get("file") as File;
+        expect({ name: uploaded.name, type: uploaded.type, text: await uploaded.text() }).toEqual({ name: "frame.png", type: "image/png", text: "image" });
+        expect(fileName).toBe("openapi/frame.png");
+    });
+
+    test("submits workflow and app tasks exactly once with nodeInfoList", async () => {
+        const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+            requests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+            return jsonResponse({ code: 0, msg: "success", data: { taskId: `task-${requests.length}`, taskStatus: "QUEUED" } });
+        };
+        const nodeInfoList = [{ nodeId: "6", fieldName: "prompt", fieldValue: "test" }];
+
+        expect(await createRunningHubTask(client, { kind: "workflow", targetId: "1904136902449209346", fields: [] }, nodeInfoList, { fetchImpl })).toBe("task-1");
+        expect(await createRunningHubTask(client, { kind: "app", targetId: "1877265245566922753", fields: [] }, nodeInfoList, { fetchImpl })).toBe("task-2");
+        expect(requests).toEqual([
+            { url: "https://www.runninghub.cn/task/openapi/create", body: { apiKey: "member-key", workflowId: "1904136902449209346", nodeInfoList } },
+            { url: "https://www.runninghub.cn/task/openapi/ai-app/run", body: { apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList } },
+        ]);
+    });
+
+    test("queries V2 using the original task ID", async () => {
+        let body: unknown;
+        const state = await queryRunningHubTask(client, "task-original", "video", {
+            fetchImpl: async (_input, init) => {
+                body = JSON.parse(String(init?.body));
+                return jsonResponse({ taskId: "task-original", status: "SUCCESS", errorCode: "", errorMessage: "", results: [{ url: "https://cdn.example/result.mp4", outputType: "mp4" }] });
+            },
+        });
+        expect(body).toEqual({ taskId: "task-original" });
+        expect(state).toEqual({ status: "completed", urls: ["https://cdn.example/result.mp4"] });
+    });
+
+    test("polls one task without resubmitting and stops on success", async () => {
+        let queryCount = 0;
+        const state = await waitForRunningHubTask(client, "task-one", "image", {
+            fetchImpl: async () => {
+                queryCount += 1;
+                return jsonResponse(
+                    queryCount === 1
+                        ? { taskId: "task-one", status: "RUNNING", results: null }
+                        : { taskId: "task-one", status: "SUCCESS", results: [{ url: "https://cdn.example/result.png", outputType: "png" }] },
+                );
+            },
+            delayImpl: async () => undefined,
+        });
+        expect(queryCount).toBe(2);
+        expect(state).toEqual(["https://cdn.example/result.png"]);
+    });
+
+    test("redacts the API key from HTTP and API errors", async () => {
+        await expect(
+            createRunningHubTask(client, { kind: "workflow", targetId: "1", fields: [] }, [], {
+                fetchImpl: async () => jsonResponse({ code: 401, msg: "invalid member-key" }, 401),
+            }),
+        ).rejects.toThrow("invalid [REDACTED]");
     });
 });

@@ -46,6 +46,16 @@ Canvas Agent 默认只监听 `127.0.0.1`。网页第一次带正确 token 连接
 
 发布前需要在 GitHub 仓库 Secrets 中配置 `NPM_TOKEN`。
 
+## 本机升级（macOS LaunchAgent）
+
+如果本机 Canvas Agent 由 LaunchAgent（`com.basketikun.canvas-agent`）托管，修改源码后运行一条命令即可升级并重启服务：
+
+```bash
+canvas-agent/scripts/upgrade-local-agent.sh
+```
+
+脚本会把当前源码打包安装到 `~/.local/share/infinite-canvas-agent`，重启 launchd 服务并做健康检查。运行目录可用 `CANVAS_AGENT_RUNTIME_DIR` 覆盖。修改了 plist（如环境变量）时需先 `launchctl bootout` 再 `bootstrap` 才会生效。
+
 ## Codex MCP
 
 如果希望 Codex 终端能直接操作画布，需要先把 Canvas Agent 注册成 Codex MCP。

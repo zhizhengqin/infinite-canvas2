@@ -3,6 +3,7 @@
 ## Unreleased
 
 + [新增] 本地 Agent 支持 Kimi Code：canvas-agent 经 ACP（`kimi acp`）驱动本机 Kimi Code CLI，配置弹窗新增「Agent」页签可在 Codex / Kimi Code 之间切换，线程、模型选择、权限审批、中断与图片附件同样可用；通信协议版本升至 7，需配套新版 canvas-agent 与前端。
++ [新增] 本地 Agent 新增 `GET /agent/local-image` 按绝对路径读取本机图片（需连接 Token），MCP 的 `assets_add` 传入该地址时前端自动附带 Token，本机图片可直接入库「我的素材」，无需临时文件服务。
 
 ## v0.19.0 - 2026-09-16
 

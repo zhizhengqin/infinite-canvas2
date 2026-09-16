@@ -8,6 +8,7 @@ import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/c
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useAgentStore } from "@/stores/use-agent-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -293,6 +294,20 @@ function listAssets(input: SiteToolInput) {
     return { total: filtered.length, page, pageSize, items };
 }
 
+// Local images served by the connected Canvas Agent need the connect token; append it for agent URLs.
+function withAgentToken(imageUrl: string) {
+    const { url, token } = useAgentStore.getState();
+    const base = url.trim().replace(/\/+$/, "");
+    if (!base || !token.trim() || !imageUrl.startsWith(`${base}/`)) return imageUrl;
+    try {
+        const parsed = new URL(imageUrl);
+        if (!parsed.searchParams.has("token")) parsed.searchParams.set("token", token.trim());
+        return parsed.toString();
+    } catch {
+        return imageUrl;
+    }
+}
+
 async function addAsset(input: SiteToolInput) {
     const kind = input.kind;
     const title = String(input.title || "").trim();
@@ -312,7 +327,7 @@ async function addAsset(input: SiteToolInput) {
         if (!imageUrl) throw new Error(siteText("imageUrlRequired"));
         let stored;
         try {
-            stored = await uploadImage(imageUrl);
+            stored = await uploadImage(withAgentToken(imageUrl));
         } catch {
             throw new Error(siteText("imageReadFailed"));
         }

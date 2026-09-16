@@ -42,9 +42,14 @@ Canvas Agent 默认只监听 `127.0.0.1`。网页第一次带正确 token 连接
 
 ## 发布
 
-`canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。推送到 `main` 后，GitHub Actions 会检查 npm 上是否已经存在当前包版本；不存在时才发布 `@basketikun/canvas-agent`。
+`canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。需要对外发布时手动执行（需先 `npm login` 到包所属账号）：
 
-发布前需要在 GitHub 仓库 Secrets 中配置 `NPM_TOKEN`。
+```bash
+cd canvas-agent
+npm publish
+```
+
+`prepack` 会自动执行构建。日常自用不需要发布，本机运行见「本机升级（macOS LaunchAgent）」。
 
 ## 本机升级（macOS LaunchAgent）
 

@@ -374,7 +374,7 @@ export class CodexAppClient {
             const request = requestId ? this.approvalRequests.get(requestId) : undefined;
             if (request) {
                 this.approvalRequests.delete(requestId);
-                this.emit("codex_approval_resolved", { ...request.params, ...params, requestId, decision: request.decision });
+                this.emit("agent_approval_resolved", { agent: "codex", ...request.params, ...params, requestId, decision: request.decision });
             }
             return;
         }
@@ -673,7 +673,7 @@ export class CodexAppClient {
         if (["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"].includes(method)) {
             const requestId = String(message.id);
             this.approvalRequests.set(requestId, { id: Number(message.id), method, params });
-            this.emit("codex_approval", { requestId, method, ...params });
+            this.emit("agent_approval", { agent: "codex", requestId, method, ...params });
             return;
         }
         const result = method === "mcpServer/elicitation/request" ? { action: "accept", content: {}, _meta: null } : { decision: "decline" };
@@ -698,7 +698,7 @@ export class CodexAppClient {
         if (this.failing) return;
         this.failing = true;
         this.failureMessage = message;
-        this.approvalRequests.forEach((request, requestId) => this.emit("codex_approval_resolved", { ...request.params, requestId, decision: request.decision || "cancel" }));
+        this.approvalRequests.forEach((request, requestId) => this.emit("agent_approval_resolved", { agent: "codex", ...request.params, requestId, decision: request.decision || "cancel" }));
         const failedTurns = new Map<string, { threadId: string; turnId: string; prompt: string; messageText?: string }>();
         this.activeTurns.forEach(({ threadId, turnId, prompt, messageText }, key) => {
             if (this.silentThreadIds.has(threadId)) return;
@@ -775,7 +775,7 @@ function turnCacheKey(threadId: string, turnId: string) {
 }
 
 /** 生成 Codex 调用 Canvas Agent MCP 的启动命令。 */
-function canvasAgentMcpCommand() {
+export function canvasAgentMcpCommand() {
     const current = process.argv.find((arg) => /index\.(t|j)s$/.test(arg)) || "";
     const entry = path.resolve(current || fileURLToPath(new URL("../index.js", import.meta.url)));
     const tsx = path.join(path.dirname(entry), "..", "node_modules", "tsx", "dist", "cli.mjs");

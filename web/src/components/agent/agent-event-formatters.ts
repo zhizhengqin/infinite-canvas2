@@ -65,9 +65,14 @@ export function agentAttachmentToChatAttachment(item: AgentMessageAttachment, en
     return { id: item.id, name: item.name, url: resolveAgentMessageAssetUrl(endpoint, token, item.dataUrl || item.url) };
 }
 
+export function agentTitle(agent?: string) {
+    const type = agent === "kimi" || agent === "codex" ? agent : useAgentStore.getState().agentType;
+    return i18n.t(`agent.types.${type}`);
+}
+
 export function formatAgentEvent(event: AgentEventPayload): Omit<AgentChatItem, "id"> | null {
     const item = event.item;
-    if (event.type === "item.completed" && item?.type === "agent_message") return { role: "assistant", title: "Codex", text: stringText(item.text) };
+    if (event.type === "item.completed" && item?.type === "agent_message") return { role: "assistant", title: agentTitle(event.agent), text: stringText(item.text) };
     return null;
 }
 
@@ -276,9 +281,9 @@ export function formatAgentEventLog(event: AgentEventPayload) {
         const tasks = planTasks(event.plan);
         return { title: tr("progressUpdated"), text: tr("progressCount", { completed: tasks.filter((item) => item.status === "completed").length, total: tasks.length }) };
     }
-    if (event.type === "turn.completed" && event.status === "failed") return { title: tr("turnFailed"), text: agentErrorView(event.error?.message).text };
+    if (event.type === "turn.completed" && event.status === "failed") return { title: tr("turnFailed"), text: agentErrorView(event.error?.message, event.agent).text };
     if (event.type === "turn.completed") return { title: tr(event.status === "interrupted" ? "turnStopped" : "turnCompleted"), text: turnSummary(event) };
-    if (event.type === "turn.failed" || event.type === "error") return { title: tr("turnFailed"), text: agentErrorView(event.message || event.error?.message).text };
+    if (event.type === "turn.failed" || event.type === "error") return { title: tr("turnFailed"), text: agentErrorView(event.message || event.error?.message, event.agent).text };
     if (event.type === "item.started" && isMcpToolItem(item)) return { title: tr("toolCalled"), text: toolName(String(item?.tool || "")) };
     if (event.type === "item.completed" && isMcpToolItem(item)) return { title: tr(item.error ? "toolFailed" : "toolCompleted"), text: `${toolName(String(item?.tool || ""))}${item.error?.message ? ` · ${item.error.message}` : ""}` };
     if (event.type === "item.completed" && item?.type === "agent_message") return { title: tr("replyReceived"), text: compactText(stringText(item.text)) };
@@ -289,10 +294,10 @@ function turnSummary(event: AgentEventPayload) {
     return event.duration_ms ? tr("seconds", { value: (event.duration_ms / 1000).toFixed(1) }) : tr("completed");
 }
 
-export function agentErrorView(value: unknown) {
+export function agentErrorView(value: unknown, agent?: string) {
     const text = normalizeText(value);
     if (/selected model is at capacity/i.test(text)) return { title: tr("modelBusy"), text: tr("modelBusyDescription") };
-    return { title: tr("taskFailed"), text: text || tr("taskFailedDescription") };
+    return { title: tr("taskFailed"), text: text || tr("taskFailedDescription", { name: agentTitle(agent) }) };
 }
 
 export function eventUsage(event: AgentEventPayload): AgentTokenUsage {
@@ -427,8 +432,8 @@ export function workingActivity(item?: AgentChatItem) {
     const key = `${item?.id || "waiting"}-${status}-${item?.text || ""}-${output.length}`;
     if (item?.role !== "tool") return { key, text: tr("thinking") };
     if (["inProgress", "in_progress", "running", "pending"].includes(status)) return { key, text: tr("operationRunning", { operation: item.title || tr("toolOperation") }) };
-    if (item.title === toolName("canvas_get_state")) return { key, text: tr("organizingCanvas") };
-    return { key, text: tr("operationCompleted", { operation: item.title || tr("toolOperation") }) };
+    if (item.title === toolName("canvas_get_state")) return { key, text: tr("organizingCanvas", { name: agentTitle() }) };
+    return { key, text: tr("operationCompleted", { operation: item.title || tr("toolOperation"), name: agentTitle() }) };
 }
 
 export function currentPlanMessage(messages: AgentChatItem[]) {

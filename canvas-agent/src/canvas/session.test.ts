@@ -216,25 +216,25 @@ test("shared thread events are broadcast with the active thread id", (t) => {
 test("new clients receive the current Codex state and later updates", (t) => {
     const session = new CanvasSession("thread-2");
     session.setCodexState({ busy: true, threadId: "thread-2", turnId: "turn-1" });
-    session.trackCodexEvent("codex_approval", { requestId: "approval-1", threadId: "thread-2" });
+    session.trackCodexEvent("agent_approval", { requestId: "approval-1", threadId: "thread-2" });
     const client = connect(session, "first", "thread-2");
     t.after(() => client.close());
 
     const hello = client.event("hello");
-    assert.equal(field(hello, "protocolVersion"), 6);
+    assert.equal(field(hello, "protocolVersion"), 7);
     assert.deepEqual(field(hello, "workspace"), { activeThreadId: "thread-2" });
     assert.deepEqual(field(hello, "conversation"), { revision: 1, conversationId: "thread-2", threadId: "thread-2", status: "ready", mcpStatuses: {} });
-    assert.deepEqual(field(hello, "codex"), { busy: true, threadId: "thread-2", turnId: "turn-1" });
-    assert.deepEqual(field(hello, "pendingApprovals"), [{ requestId: "approval-1", threadId: "thread-2" }]);
+    assert.deepEqual(field(hello, "agents"), { codex: { busy: true, threadId: "thread-2", turnId: "turn-1" }, kimi: { busy: false, threadId: "", turnId: "" } });
+    assert.deepEqual(field(hello, "pendingApprovals"), [{ agent: "codex", requestId: "approval-1", threadId: "thread-2" }]);
 
-    session.trackCodexEvent("codex_approval_resolved", { requestId: "approval-1" });
-    assert.deepEqual(session.codexPendingApprovals, []);
-    session.trackCodexEvent("codex_approval", { requestId: "approval-2", threadId: "thread-2" });
+    session.trackCodexEvent("agent_approval_resolved", { requestId: "approval-1" });
+    assert.deepEqual(session.agentPendingApprovals, []);
+    session.trackCodexEvent("agent_approval", { requestId: "approval-2", threadId: "thread-2" });
     session.setCodexState({ busy: false });
-    assert.deepEqual(session.codexPendingApprovals, [{ requestId: "approval-2", threadId: "thread-2" }]);
+    assert.deepEqual(session.agentPendingApprovals, [{ agent: "codex", requestId: "approval-2", threadId: "thread-2" }]);
     session.trackCodexEvent("agent_error", { message: "app-server exited" });
-    assert.deepEqual(session.codexPendingApprovals, []);
-    assert.deepEqual(client.event("codex_state"), { busy: false, threadId: "thread-2", turnId: "turn-1" });
+    assert.deepEqual(session.agentPendingApprovals, []);
+    assert.deepEqual(client.event("agent_state"), { agent: "codex", busy: false, threadId: "thread-2", turnId: "turn-1" });
 });
 
 test("对话 revision 单调递增且 MCP 全部进入终态前保持 preparing", () => {
@@ -305,14 +305,14 @@ test("Skill draft generation broadcasts shared busy state and restores the previ
 
     assert.equal(session.beginCodexMutation(), true);
     session.setCodexState({ busy: true, threadId: previous.threadId, turnId: "" }, { preserveReplay: true });
-    assert.deepEqual(first.events("codex_state").at(-1), { busy: true, threadId: "thread-1", turnId: "" });
-    assert.deepEqual(second.events("codex_state").at(-1), { busy: true, threadId: "thread-1", turnId: "" });
+    assert.deepEqual(first.events("agent_state").at(-1), { agent: "codex", busy: true, threadId: "thread-1", turnId: "" });
+    assert.deepEqual(second.events("agent_state").at(-1), { agent: "codex", busy: true, threadId: "thread-1", turnId: "" });
     assert.equal(session.beginCodexMutation(), false);
 
     session.setCodexState(previous, { preserveReplay: true });
     session.endCodexMutation();
-    assert.deepEqual(first.events("codex_state").at(-1), previous);
-    assert.deepEqual(second.events("codex_state").at(-1), previous);
+    assert.deepEqual(first.events("agent_state").at(-1), { agent: "codex", ...previous });
+    assert.deepEqual(second.events("agent_state").at(-1), { agent: "codex", ...previous });
     assert.equal(session.beginCodexMutation(), true);
     session.endCodexMutation();
 });

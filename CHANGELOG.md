@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [新增] 本地 Agent 支持 Kimi Code：canvas-agent 经 ACP（`kimi acp`）驱动本机 Kimi Code CLI，配置弹窗新增「Agent」页签可在 Codex / Kimi Code 之间切换，线程、模型选择、权限审批、中断与图片附件同样可用；通信协议版本升至 7，需配套新版 canvas-agent 与前端。
+
 ## v0.18.0 - 2026-09-07
 
 + [调整] 图片 1K / 2K / 4K 按宽高比使用固定尺寸表。

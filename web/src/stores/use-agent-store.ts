@@ -4,6 +4,7 @@ import i18n from "@/i18n";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
+export type AgentType = "codex" | "kimi";
 export type AgentChatRole = "user" | "assistant" | "system" | "tool" | "error";
 export type AgentAttachment = { id: string; name: string; type: string; size: number; width: number; height: number; url: string; dataUrl: string };
 export type AgentMessageAttachment = Pick<AgentAttachment, "id" | "name" | "url"> & Partial<Pick<AgentAttachment, "type" | "size" | "width" | "height" | "dataUrl">>;
@@ -43,8 +44,21 @@ const CONNECT_TIMEOUT_MS = 6000;
 let agentSource: EventSource | null = null;
 let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
+function readAgentType(): AgentType {
+    return typeof window === "undefined" ? "codex" : localStorage.getItem("canvas-agent-agent-type") === "kimi" ? "kimi" : "codex";
+}
+
+function readAgentModel(agentType: AgentType) {
+    return typeof window === "undefined" ? "" : localStorage.getItem(`canvas-agent-model-${agentType}`) || "";
+}
+
+function readAgentReasoningEffort(agentType: AgentType) {
+    return typeof window === "undefined" ? "" : (localStorage.getItem(`canvas-agent-reasoning-effort-${agentType}`) as AgentReasoningEffort) || "";
+}
+
 type AgentStore = {
     width: number;
+    agentType: AgentType;
     panelOpen: boolean;
     panelMounted: boolean;
     panelClosing: boolean;
@@ -81,13 +95,14 @@ type AgentStore = {
     connectError: string;
     pendingTool: AgentPendingToolCall | null;
     pendingApprovals: AgentPendingApproval[];
-    setAgentState: (patch: Partial<Omit<AgentStore, "setAgentState" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
+    setAgentState: (patch: Partial<Omit<AgentStore, "setAgentState" | "setAgentType" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
+    setAgentType: (agentType: AgentType) => void;
     openPanel: () => void;
     closePanel: () => void;
     togglePanel: () => void;
     setCanvasContext: (context: AgentCanvasContext | null) => void;
     connectAgent: (options?: { silent?: boolean }) => void;
-    disconnectAgent: (patch?: Partial<Omit<AgentStore, "setAgentState" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
+    disconnectAgent: (patch?: Partial<Omit<AgentStore, "setAgentState" | "setAgentType" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
     addMessage: (item: AgentChatItem) => void;
     addEventLog: (item: AgentEventLog) => void;
     clearEventLogs: () => void;
@@ -97,6 +112,7 @@ export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
     width: typeof window === "undefined" ? 440 : Number(localStorage.getItem("canvas-agent-panel-width")) || 440,
+    agentType: readAgentType(),
     panelOpen: false,
     panelMounted: true,
     panelClosing: false,
@@ -124,8 +140,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     confirmTools: false,
     permissionMode: typeof window === "undefined" ? "request" : (localStorage.getItem("canvas-agent-permission-mode") as AgentPermissionMode) || "request",
     models: [],
-    model: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-model") || "",
-    reasoningEffort: typeof window === "undefined" ? "" : (localStorage.getItem("canvas-agent-reasoning-effort") as AgentReasoningEffort) || "",
+    model: readAgentModel(readAgentType()),
+    reasoningEffort: readAgentReasoningEffort(readAgentType()),
     activity: i18n.t("agent.state.ready"),
     conversation: { revision: 0, conversationId: "", threadId: "", status: "idle", mcpStatuses: {} },
     bootstrapStatus: null,
@@ -134,6 +150,30 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     pendingTool: null,
     pendingApprovals: [],
     setAgentState: (patch) => set(patch),
+    setAgentType: (agentType) => {
+        if (agentType === get().agentType) return;
+        localStorage.setItem("canvas-agent-agent-type", agentType);
+        set({
+            agentType,
+            model: readAgentModel(agentType),
+            reasoningEffort: readAgentReasoningEffort(agentType),
+            activeTab: get().activeTab === "skills" ? "chat" : get().activeTab,
+            messages: [],
+            tokenUsage: null,
+            threads: [],
+            activeThreadId: "",
+            activeTurnId: "",
+            workspacePath: "",
+            loadingThreads: false,
+            waiting: false,
+            sending: false,
+            pendingTool: null,
+            pendingApprovals: [],
+            conversation: { revision: 0, conversationId: "", threadId: "", status: "idle", mcpStatuses: {} },
+            bootstrapStatus: null,
+            mcpStartupStatuses: {},
+        });
+    },
     openPanel: () => set({ panelOpen: true, panelMounted: true, panelClosing: false }),
     closePanel: () => {
         if (!get().panelMounted || get().panelClosing) return;

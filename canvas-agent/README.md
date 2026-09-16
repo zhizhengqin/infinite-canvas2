@@ -157,3 +157,11 @@ claude mcp add --scope user --transport stdio infinite-canvas -- node /path/to/i
 ```
 
 Canvas Agent 调用 Claude Code 时会默认带上 `--allowedTools mcp__infinite-canvas__*`，画布写操作仍由网页侧边栏确认。
+
+## Kimi Code
+
+Canvas Agent 也可以通过 Agent Client Protocol（ACP）驱动本机的 Kimi Code CLI。要求本机已安装并登录 Kimi Code CLI（`kimi login`）；Canvas Agent 会启动 `kimi acp` 子进程并复用同一个 ACP 会话，会话创建时注入 `infinite-canvas` MCP，画布写操作仍由网页侧边栏确认。默认从 PATH 查找 `kimi`，也可以用 `CANVAS_AGENT_KIMI_BIN` 指定可执行文件路径。
+
+Kimi 会话历史直接来自 ACP `session/load` 回放，图片附件以 ACP image block（base64）直接传入，不写临时文件；权限审批（`session/request_permission`）会弹到网页侧边栏，模型切换走 `session/set_config_option`。
+
+Kimi Code 支持要求 Agent 协议版本 7，需配套新版前端；旧版前端连接时会被协议版本校验拒绝。

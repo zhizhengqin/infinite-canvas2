@@ -6,8 +6,9 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { runClaudeTurn } from "../agent/claude.js";
 import { archiveCodexThread, CodexSkillLookupError, configureCodexSkill, generateCodexSkillDraft, interruptCodexTurn, isRecoverableThreadError, listCodexModels, listCodexSkills, listCodexThreads, readCodexThread, resolveCodexApproval, resolveCodexSkill, resumeCodexThread, runCodexTurn, startCodexThread, summarizeCodexThread } from "../agent/codex.js";
 import type { CodexReasoningEffort, CodexSkillSelector } from "../agent/codex-protocol.js";
+import { deleteKimiThread, interruptKimiTurn, kimiAgentStatus, listKimiModels, listKimiThreads, resolveKimiApproval, resumeKimiThread, runKimiTurn, startKimiThread } from "../agent/kimi.js";
 import { messageMetadataStore } from "../agent/message-metadata.js";
-import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
+import type { AgentAttachment, AgentPermissionMode, AgentType } from "../agent/types.js";
 import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
@@ -35,7 +36,8 @@ export function startHttpServer() {
             if (value.type === "mcp.startup") session.updateConversationMcp(String(value.name || ""), startupStatus(value.status), String(value.error || "") || null, String(value.failureReason || "") || null);
             if (value.type === "mcp.complete") session.completeConversationMcpInventory(mcpInventory(value.services));
         }
-        const scope = session.codexBusy ? session.codexEventScope : { threadId: "", turnId: "", sourceClientId: "" };
+        const agent: AgentType = value.agent === "kimi" ? "kimi" : "codex";
+        const scope = session.agentBusy(agent) ? session.agentEventScope(agent) : { threadId: "", turnId: "", sourceClientId: "" };
         const threadId = String(value.threadId || value.thread_id || scope.threadId || ensureSiteWorkspace(config).activeThreadId || "");
         const turnId = String(value.turnId || value.turn_id || scope.turnId || "");
         const sourceClientId = String(value.sourceClientId || scope.sourceClientId || "");
@@ -45,14 +47,14 @@ export function startHttpServer() {
             ...(turnId ? { turnId, turn_id: turnId } : {}),
             ...(sourceClientId ? { sourceClientId } : {}),
         };
-        session.trackCodexEvent(type, data);
+        session.trackAgentEvent(agent, type, data);
         threadId ? session.emitThread(type, threadId, data) : session.emitAll(type, data);
     };
     /** 保存并广播当前站点工作空间的活跃线程。 */
-    const setActiveThread = (activeThreadId: string, payload: Record<string, unknown> = {}, preserveConversation = false) => {
+    const setActiveThread = (activeThreadId: string, payload: Record<string, unknown> = {}, preserveConversation = false, agent: AgentType = "codex") => {
         const workspace = updateSiteWorkspace(config, { activeThreadId: activeThreadId || undefined });
         if (!preserveConversation) session.activateConversation(activeThreadId, String(payload.sourceClientId || "") || undefined);
-        if (!session.codexBusy && session.codexThreadId !== activeThreadId) session.setCodexState({ threadId: activeThreadId, turnId: "" });
+        if (!session.agentBusy(agent) && session.agentThreadId(agent) !== activeThreadId) session.setAgentState(agent, { threadId: activeThreadId, turnId: "" });
         session.emitThread("workspace_changed", activeThreadId, { ...payload, activeThreadId, conversation: session.conversationStateSnapshot });
         return workspace;
     };
@@ -96,10 +98,10 @@ export function startHttpServer() {
         session.completeConversationPreparation(threadId);
         return result;
     };
-    const failPreparedConversation = (error: unknown, threadId: string, clientId = "") => {
+    const failPreparedConversation = (error: unknown, threadId: string, clientId = "", agent: AgentType = "codex") => {
         const text = error instanceof Error ? error.message : String(error);
         session.failConversationPreparation(text);
-        emit("agent_bootstrap", { type: "codex.prepare_failed", threadId, sourceClientId: clientId || undefined, error: text });
+        emit("agent_bootstrap", { type: `${agent}.prepare_failed`, threadId, sourceClientId: clientId || undefined, error: text });
     };
     const app = express();
     app.disable("x-powered-by");
@@ -121,7 +123,7 @@ export function startHttpServer() {
         next();
     });
     app.get("/health", (_req, res) => res.json(session.health()));
-    app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true }));
+    app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true, agents: [{ type: "codex", available: true }, { type: "kimi", ...kimiAgentStatus() }] }));
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
@@ -418,6 +420,199 @@ export function startHttpServer() {
     }));
     app.post("/agent/codex/interrupt", route(async (req, res) => {
         const ok = await interruptCodexTurn(skillDraftRunning ? undefined : String(req.body?.threadId || ""));
+        res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
+    }));
+    app.use("/agent/kimi", (_req, res, next) => {
+        const status = kimiAgentStatus();
+        if (!status.available) return void res.status(400).json({ ok: false, error: status.reason || "Kimi Code CLI 不可用" });
+        next();
+    });
+    app.get("/agent/kimi/models", route(async (_req, res) => res.json({ ok: true, ...(await listKimiModels(emit)) })));
+    app.get("/agent/kimi/threads", route(async (_req, res) => {
+        const workspace = ensureSiteWorkspace(config);
+        const result = await listKimiThreads(emit, { cwd: workspace.workspacePath });
+        res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot, ...result });
+    }));
+    app.post("/agent/kimi/threads/new", kimiMutation(async (req, res) => {
+        const clientId = String(req.body?.clientId || "");
+        const workspace = ensureSiteWorkspace(config);
+        session.beginConversation({ sourceClientId: clientId });
+        setActiveThread("", { emptyThread: true, draftThread: true, sourceClientId: clientId }, true, "kimi");
+        emit("agent_bootstrap", { type: "kimi.preparing", sourceClientId: clientId || undefined });
+        try {
+            const thread = await startKimiThread(emit, workspace.workspacePath, permissionMode(req.body?.permissionMode));
+            session.completeConversationMcpInventory([{ name: "infinite-canvas" }]);
+            session.completeConversationPreparation(thread.id);
+            const nextWorkspace = setActiveThread(thread.id, { sourceClientId: clientId }, true, "kimi");
+            res.json({ ok: true, workspace: nextWorkspace, conversation: session.conversationStateSnapshot, thread, messages: [] });
+        } catch (error) {
+            failPreparedConversation(error, "", clientId, "kimi");
+            throw error;
+        }
+    }));
+    app.get("/agent/kimi/threads/:threadId", route(async (req, res) => {
+        const workspace = ensureSiteWorkspace(config);
+        const threadId = routeParam(req.params.threadId);
+        const result = await resumeKimiThread(emit, threadId, workspace.workspacePath);
+        res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot, thread: { id: result.id }, messages: result.messages, settledTurnIds: result.settledTurnIds, historyReady: result.historyReady });
+    }));
+    app.post("/agent/kimi/history/ack", (req, res) => {
+        const threadId = String(req.body?.threadId || "");
+        const turnIds = Array.isArray(req.body?.turnIds) ? req.body.turnIds.map(String) : [];
+        session.acknowledgeAgentHistory("kimi", threadId, turnIds);
+        res.json({ ok: true });
+    });
+    app.post("/agent/kimi/threads/:threadId/resume", kimiMutation(async (req, res) => {
+        const threadId = routeParam(req.params.threadId);
+        const clientId = String(req.body?.clientId || "");
+        const workspace = ensureSiteWorkspace(config);
+        session.beginConversation({ conversationId: threadId, threadId, sourceClientId: clientId || undefined });
+        emit("agent_bootstrap", { type: "kimi.preparing", threadId, sourceClientId: clientId || undefined });
+        try {
+            const result = await resumeKimiThread(emit, threadId, workspace.workspacePath, permissionMode(req.body?.permissionMode));
+            session.completeConversationMcpInventory([{ name: "infinite-canvas" }]);
+            session.completeConversationPreparation(threadId);
+            const nextWorkspace = setActiveThread(threadId, { sourceClientId: clientId }, true, "kimi");
+            res.json({ ok: true, workspace: nextWorkspace, conversation: session.conversationStateSnapshot, thread: { id: result.id }, messages: result.messages, settledTurnIds: result.settledTurnIds, historyReady: result.historyReady });
+        } catch (error) {
+            failPreparedConversation(error, threadId, clientId, "kimi");
+            throw error;
+        }
+    }));
+    app.delete("/agent/kimi/threads/:threadId", kimiMutation(async (req, res) => {
+        const workspace = ensureSiteWorkspace(config);
+        const threadId = routeParam(req.params.threadId);
+        await deleteKimiThread(emit, threadId);
+        const nextWorkspace = setActiveThread(workspace.activeThreadId === threadId ? "" : workspace.activeThreadId || "", { sourceClientId: String(req.body?.clientId || "") }, false, "kimi");
+        res.json({ ok: true, workspace: nextWorkspace, conversation: session.conversationStateSnapshot });
+    }));
+    app.post("/agent/kimi/turn", kimiMutation(async (req, res) => {
+        const attachments = Array.isArray(req.body?.attachments) ? (req.body.attachments as AgentAttachment[]) : [];
+        const workspace = ensureSiteWorkspace(config);
+        const prompt = String(req.body?.prompt || "");
+        if (!prompt.trim() && !attachments.length) return res.status(400).json({ ok: false, error: "请输入任务内容" });
+        const clientId = String(req.body?.clientId || "");
+        if (!clientId || !session.hasClient(clientId)) return res.status(409).json({ ok: false, error: "发起任务的网页已断开，请重新连接后再试" });
+        const requestedThreadId = String(req.body?.threadId || "");
+        const activeThreadId = workspace.activeThreadId || "";
+        const conversation = session.conversationStateSnapshot;
+        const requestedConversationId = String(req.body?.conversationId || "");
+        const expectedRevision = Number(req.body?.expectedRevision || 0);
+        if (requestedThreadId !== activeThreadId || conversation.threadId !== activeThreadId || (requestedConversationId && requestedConversationId !== conversation.conversationId) || (expectedRevision && expectedRevision !== conversation.revision)) {
+            return res.status(409).json({ ok: false, code: "CONVERSATION_STALE", error: "当前会话已切换，已同步最新状态，请确认后重试", state: conversation });
+        }
+        if (!activeThreadId || !["ready", "warning"].includes(conversation.status)) {
+            return res.status(409).json({ ok: false, code: "CONVERSATION_NOT_READY", error: "Kimi 对话仍在初始化，请稍候重试", state: conversation });
+        }
+        const model = String(req.body?.model || "") || undefined;
+        const messageId = String(req.body?.messageId || Date.now());
+        const messageText = String(req.body?.messageText || prompt || `发送了 ${attachments.length} 张图片`);
+        const messageMetadata = await messageMetadataStore.recordPending(messageId, req.body?.messageMetadata);
+        let threadId = activeThreadId;
+        logger.info("Kimi turn accepted", { threadId: req.body?.threadId, model: model || "default", promptLength: prompt.length, attachmentCount: attachments.length });
+        session.bindClient(clientId);
+        session.markConversationRunning(threadId);
+        session.setAgentState("kimi", { busy: true, threadId, turnId: "" });
+        try {
+            let turnId = "";
+            const attachmentRefs = session.setTurnAttachments(clientId, attachments);
+            session.emitThread("chat_message", threadId, {
+                agent: "kimi",
+                sourceClientId: clientId,
+                message: { id: `${threadId}:pending:synthetic:user`, itemId: "synthetic:user", clientMessageId: messageId, threadId, turnId: "", role: "user", text: messageText, ...messageMetadata },
+            });
+            let chatTurnId = "";
+            /** 将包装层日志和兜底错误固定广播到当前 turn。 */
+            const lifecycleEmit = (type: string, payload: unknown) => {
+                const value = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload };
+                const eventThreadId = String(value.threadId || value.thread_id || threadId);
+                const eventTurnId = String(value.turnId || value.turn_id || turnId);
+                const sourceClientId = String(value.sourceClientId || clientId);
+                session.emitThread(type, eventThreadId, {
+                    agent: "kimi",
+                    ...value,
+                    threadId: eventThreadId,
+                    thread_id: eventThreadId,
+                    ...(eventTurnId ? { turnId: eventTurnId, turn_id: eventTurnId } : {}),
+                    ...(sourceClientId ? { sourceClientId } : {}),
+                });
+            };
+            void runKimiTurn(withAttachmentContext(prompt, attachmentRefs), lifecycleEmit, attachments, {
+                threadId,
+                cwd: workspace.workspacePath,
+                permissionMode: permissionMode(req.body?.permissionMode),
+                model,
+                onStart: () => session.bindClient(clientId),
+                onThread: (actualThreadId) => {
+                    const threadChanged = actualThreadId !== threadId;
+                    void messageMetadataStore.bindThread(messageId, actualThreadId).catch((error) => logger.warn("Failed to bind message metadata to thread", { clientMessageId: messageId, threadId: actualThreadId, error }));
+                    if (threadChanged) {
+                        threadId = actualThreadId;
+                        setActiveThread(threadId, { emptyThread: true, sourceClientId: clientId }, false, "kimi");
+                    }
+                    session.markConversationRunning(threadId);
+                    session.setAgentState("kimi", { busy: true, threadId, turnId: "" });
+                    if (threadChanged) {
+                        session.emitThread("chat_message", threadId, {
+                            agent: "kimi",
+                            sourceClientId: clientId,
+                            message: { id: `${threadId}:pending:synthetic:user`, itemId: "synthetic:user", clientMessageId: messageId, threadId, turnId: "", role: "user", text: messageText, ...messageMetadata },
+                        });
+                    }
+                },
+                onTurn: (actualTurnId) => {
+                    turnId = actualTurnId;
+                    void messageMetadataStore.bindTurn(messageId, threadId, turnId).catch((error) => logger.warn("Failed to bind message metadata to turn", { clientMessageId: messageId, threadId, turnId, error }));
+                    if (chatTurnId !== turnId) {
+                        chatTurnId = turnId;
+                        session.emitThread("chat_message", threadId, {
+                            agent: "kimi",
+                            turnId,
+                            sourceClientId: clientId,
+                            message: { id: `${threadId}:${turnId}:synthetic:user`, itemId: "synthetic:user", clientMessageId: messageId, threadId, turnId, role: "user", text: messageText, ...messageMetadata },
+                        });
+                    }
+                    logger.info("Kimi turn started", { threadId, turnId, model: model || "default" });
+                    session.setAgentState("kimi", { busy: true, threadId, turnId });
+                },
+                onFinish: () => {
+                    logger.info("Kimi turn finished", { threadId, turnId });
+                    if (!turnId) void messageMetadataStore.remove(messageId, threadId).catch((error) => logger.warn("Failed to remove unbound message metadata", { clientMessageId: messageId, error }));
+                    session.clearTurnAttachments(clientId);
+                    if (clientId) session.releaseClient(clientId);
+                    session.setAgentState("kimi", { busy: false, threadId, turnId });
+                    session.finishConversationRun(threadId);
+                },
+            });
+            res.json({ ok: true, threadId });
+        } catch (error) {
+            await messageMetadataStore.remove(messageId, threadId).catch((metadataError) => logger.warn("Failed to remove rejected message metadata", { clientMessageId: messageId, error: metadataError }));
+            session.releaseClient(clientId);
+            session.setAgentState("kimi", { busy: false, threadId, turnId: "" });
+            session.finishConversationRun(threadId);
+            throw error;
+        }
+    }));
+
+    /** 将 Kimi 写操作串行化，避免多窗口在异步请求期间交叉修改会话。 */
+    function kimiMutation(handler: (req: Request, res: Response) => unknown | Promise<unknown>) {
+        return route(async (req, res) => {
+            if (!session.beginAgentMutation("kimi")) return res.status(409).json({ ok: false, code: "CONVERSATION_BUSY", error: "Kimi 正在运行或正在切换会话，请稍后重试", state: session.conversationStateSnapshot });
+            try {
+                return await handler(req, res);
+            } finally {
+                session.endAgentMutation("kimi");
+            }
+        });
+    }
+    app.post("/agent/kimi/approval", route(async (req, res) => {
+        const decision = String(req.body?.decision || "");
+        if (!["accept", "acceptForSession", "decline", "cancel"].includes(decision)) return res.status(400).json({ ok: false, error: "无效的审批决定" });
+        const ok = await resolveKimiApproval(String(req.body?.requestId || ""), decision);
+        res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "审批请求已失效" }) });
+    }));
+    app.post("/agent/kimi/interrupt", route(async (req, res) => {
+        const ok = await interruptKimiTurn(String(req.body?.threadId || ""));
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
     }));
     app.post("/agent/claude/turn", (req, res) => {

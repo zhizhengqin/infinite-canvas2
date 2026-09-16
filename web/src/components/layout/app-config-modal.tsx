@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
+import { ConfigAgent } from "@/components/layout/config-agent";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
 import type { AppLocale } from "@/i18n";
@@ -216,6 +217,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         key: "local-proxy",
                         label: t("config.tabs.localProxy"),
                         children: <ConfigLocalProxy />,
+                    },
+                    {
+                        key: "agent",
+                        label: t("config.tabs.agent"),
+                        children: <ConfigAgent />,
                     },
                     {
                         key: "preferences",

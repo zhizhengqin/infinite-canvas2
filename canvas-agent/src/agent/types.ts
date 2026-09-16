@@ -1,6 +1,9 @@
 /** Agent 向网页广播事件的函数类型。 */
 export type AgentEmit = (type: string, payload: unknown) => void;
 
+/** Canvas Agent 支持的本地 Agent 类型。 */
+export type AgentType = "codex" | "kimi";
+
 /** 用户随当前 Agent 消息上传的附件。 */
 export type AgentAttachment = { id?: string; name?: string; type?: string; size?: number; width?: number; height?: number; dataUrl?: string };
 

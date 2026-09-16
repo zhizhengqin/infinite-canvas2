@@ -27,17 +27,17 @@ test("审批只在 app-server 确认 resolved 后清除", () => {
     const testClient = client as unknown as TestClient;
 
     testClient.answerServerRequest({ id: 17, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1" } });
-    assert.equal(events.filter((item) => item.type === "codex_approval").length, 1);
+    assert.equal(events.filter((item) => item.type === "agent_approval").length, 1);
 
     assert.equal(client.resolveApproval("17", "accept"), true);
     assert.equal(writes.length, 1);
-    assert.equal(events.some((item) => item.type === "codex_approval_resolved"), false);
+    assert.equal(events.some((item) => item.type === "agent_approval_resolved"), false);
     assert.equal(client.resolveApproval("17", "accept"), true);
     assert.equal(writes.length, 1);
 
     testClient.handleNotification("serverRequest/resolved", { requestId: "17" });
-    const resolved = events.find((item) => item.type === "codex_approval_resolved");
-    assert.deepEqual(resolved?.payload, { threadId: "thread-1", turnId: "turn-1", requestId: "17", decision: "accept" });
+    const resolved = events.find((item) => item.type === "agent_approval_resolved");
+    assert.deepEqual(resolved?.payload, { agent: "codex", threadId: "thread-1", turnId: "turn-1", requestId: "17", decision: "accept" });
     assert.equal(client.resolveApproval("17", "accept"), false);
 });
 

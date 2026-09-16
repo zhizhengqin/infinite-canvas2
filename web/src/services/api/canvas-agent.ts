@@ -1,8 +1,9 @@
 import i18n from "@/i18n";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import type { AgentReasoningEffort } from "@/stores/use-agent-store";
+import type { AgentReasoningEffort, AgentType } from "@/stores/use-agent-store";
 
-type AgentConfigResponse = { ok?: boolean; protocolVersion?: number; url?: string; token?: string; hasToken?: boolean };
+export type AgentAvailability = { type: AgentType; available: boolean; reason?: string };
+type AgentConfigResponse = { ok?: boolean; protocolVersion?: number; url?: string; token?: string; hasToken?: boolean; agents?: AgentAvailability[] };
 const AGENT_MESSAGE_ASSET_PATTERN = /^agent-asset:([a-f0-9]{64})\/([a-f0-9]{64}\.(?:gif|jpe?g|png|webp))$/;
 
 export class AgentApiError<T = unknown> extends Error {
@@ -64,12 +65,12 @@ export async function postToolResult(endpoint: string, token: string, clientId: 
     await fetchAgentJson(endpoint, token, `/canvas/result?clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-export async function postCodexApproval(endpoint: string, token: string, requestId: string, decision: "accept" | "acceptForSession" | "decline") {
-    await fetchAgentJson(endpoint, token, "/agent/codex/approval", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, decision }) });
+export async function postAgentApproval(endpoint: string, token: string, agentType: AgentType, requestId: string, decision: "accept" | "acceptForSession" | "decline") {
+    await fetchAgentJson(endpoint, token, `/agent/${agentType}/approval`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, decision }) });
 }
 
-export async function interruptCodexTurn(endpoint: string, token: string, threadId?: string) {
-    await fetchAgentJson(endpoint, token, "/agent/codex/interrupt", jsonPost({ threadId }));
+export async function interruptAgentTurn(endpoint: string, token: string, agentType: AgentType, threadId?: string) {
+    await fetchAgentJson(endpoint, token, `/agent/${agentType}/interrupt`, jsonPost({ threadId }));
 }
 
 export async function acknowledgeCodexHistory(endpoint: string, token: string, threadId: string, turnIds: string[]) {

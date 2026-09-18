@@ -4,7 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
-import type { RunningHubTarget } from "@/services/api/runninghub";
+import type { RunningHubTarget, RunningHubValidation } from "@/services/api/runninghub";
 
 export type ApiCallFormat = "openai" | "gemini" | "runninghub";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -141,6 +141,7 @@ type ConfigStore = {
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    learnRunningHubFieldOptions: (modelValue: string, validation: RunningHubValidation) => void;
     importChannelCredentials: (input: { baseUrl?: string | null; apiKey?: string | null }) => ChannelCredentialsImportResult;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -205,6 +206,11 @@ export function resolveRunningHubTarget(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.runningHub;
 }
 
+/** Learn enum option lists reported by a failed RunningHub validation back into the stored target, so the next submission maps values correctly. */
+export function learnRunningHubValidationOptions(modelValue: string, state: { validation?: RunningHubValidation }) {
+    if (state.validation) useConfigStore.getState().learnRunningHubFieldOptions(modelValue, state.validation);
+}
+
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
     return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
@@ -231,6 +237,21 @@ export const useConfigStore = create<ConfigStore>()(
                 if (result.config !== currentConfig) set({ config: result.config });
                 return { status: result.status, channelName: result.channelName };
             },
+            learnRunningHubFieldOptions: (modelValue, validation) =>
+                set((state) => {
+                    const found = findChannelModel(state.config, modelValue);
+                    if (!found?.model.runningHub) return state;
+                    const { channel, model } = found;
+                    const fields = model.runningHub!.fields.map((field) =>
+                        field.nodeId === validation.nodeId && field.fieldName === validation.fieldName && field.options?.join() !== validation.options.join() ? { ...field, options: validation.options } : field,
+                    );
+                    return {
+                        config: {
+                            ...state.config,
+                            channels: state.config.channels.map((item) => (item.id === channel.id ? { ...item, models: item.models.map((entry) => (entry.name === model.name ? { ...entry, runningHub: { ...model.runningHub!, fields } } : entry)) } : item)),
+                        },
+                    };
+                }),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {

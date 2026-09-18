@@ -168,6 +168,28 @@ describe("normalizeRunningHubTaskResponse", () => {
             error: "任务成功但没有返回图片",
         });
     });
+
+    test("parses ComfyUI enum validation failures into enriched errors and learnable options", () => {
+        const state = normalizeRunningHubTaskResponse(
+            {
+                taskId: "t1",
+                status: "FAILED",
+                errorMessage: "工作流运行失败",
+                failedReason: {
+                    exception_type: "prompt_outputs_failed_validation",
+                    node_id: "29",
+                    exception_message: "Value not in list",
+                    traceback: ["aspect_ratio: '16:9' not in ['1:1 (Square)', '9:16 (Portrait Widescreen)', '16:9 (Widescreen)', '21:9 (Ultrawide)']"],
+                },
+            },
+            "video",
+        );
+        expect(state.status).toBe("failed");
+        if (state.status !== "failed") return;
+        expect(state.error).toContain("aspect_ratio");
+        expect(state.error).toContain("16:9 (Widescreen)");
+        expect(state.validation).toEqual({ nodeId: "29", fieldName: "aspect_ratio", value: "16:9", options: ["1:1 (Square)", "9:16 (Portrait Widescreen)", "16:9 (Widescreen)", "21:9 (Ultrawide)"] });
+    });
 });
 
 describe("RunningHub HTTP client", () => {

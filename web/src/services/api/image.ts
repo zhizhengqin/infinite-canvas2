@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, learnRunningHubValidationOptions, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { runRunningHubGeneration } from "./runninghub";
 import { nanoid } from "nanoid";
@@ -751,7 +751,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             prompt: withSystemPrompt(requestConfig, prompt),
             ratio: config.size,
             resolution: config.quality,
-        }, {}, options);
+        }, {}, { ...options, onFailed: (state) => learnRunningHubValidationOptions(selectedModel, state) });
         return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
     }
     if (script) {
@@ -826,7 +826,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             "image",
             { prompt: withSystemPrompt(requestConfig, requestPrompt), ratio: config.size, resolution: config.quality },
             { images: files },
-            options,
+            { ...options, onFailed: (state) => learnRunningHubValidationOptions(selectedModel, state) },
         );
         return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
     }

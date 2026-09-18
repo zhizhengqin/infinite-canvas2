@@ -6,7 +6,7 @@ import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, buildApiUrl, learnRunningHubValidationOptions, modelOptionName, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { createRunningHubGenerationTask, queryRunningHubTask, waitForRunningHubTask } from "./runninghub";
 import type { ReferenceImage } from "@/types/image";
@@ -51,7 +51,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
     if (task.provider === "runninghub") {
         const requestConfig = resolveModelRequestConfig(config, task.model);
-        const [url] = await waitForRunningHubTask(requestConfig, task.id, "video", options);
+        const [url] = await waitForRunningHubTask(requestConfig, task.id, "video", { ...options, onFailed: (state) => learnRunningHubValidationOptions(task.model, state) });
         return { url, mimeType: "video/mp4" };
     }
     for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -116,6 +116,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "runninghub") {
         const state = await queryRunningHubTask(requestConfig, task.id, "video", options);
+        if (state.status === "failed") learnRunningHubValidationOptions(task.model, state);
         if (state.status === "completed") return { status: "completed", result: { url: state.urls[0], mimeType: "video/mp4" } };
         return state.status === "failed" ? state : { status: "pending" };
     }

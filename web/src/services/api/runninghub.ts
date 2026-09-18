@@ -35,7 +35,8 @@ export type RunningHubGenerationInputs = {
 export type RunningHubMediaFiles = { images?: File[]; videos?: File[]; audios?: File[] };
 
 export type RunningHubNodeInfo = { nodeId: string; fieldName: string; fieldValue: string | number | boolean };
-export type RunningHubTaskState = { status: "pending" } | { status: "completed"; urls: string[] } | { status: "failed"; error: string };
+export type RunningHubValidation = { nodeId: string; fieldName: string; value: string; options: string[] };
+export type RunningHubTaskState = { status: "pending" } | { status: "completed"; urls: string[] } | { status: "failed"; error: string; validation?: RunningHubValidation };
 export type RunningHubClientConfig = { baseUrl: string; apiKey: string; proxyEnabled?: boolean; proxyUrl?: string };
 export type RunningHubFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RunningHubRequestOptions = {
@@ -43,6 +44,7 @@ export type RunningHubRequestOptions = {
     fetchImpl?: RunningHubFetch;
     delayImpl?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
     maxAttempts?: number;
+    onFailed?: (state: Extract<RunningHubTaskState, { status: "failed" }>) => void;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -95,7 +97,10 @@ export async function waitForRunningHubTask(config: RunningHubClientConfig, task
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await queryRunningHubTask(config, taskId, capability, options);
         if (state.status === "completed") return state.urls;
-        if (state.status === "failed") throw new Error(state.error);
+        if (state.status === "failed") {
+            options?.onFailed?.(state);
+            throw new Error(state.error);
+        }
         if (attempt + 1 < attempts) await wait(RUNNINGHUB_POLL_INTERVAL_MS, options?.signal);
     }
     throw new Error(`RunningHub 任务等待超时（taskId: ${taskId}），可继续查询该任务，请勿重新提交`);
@@ -209,7 +214,13 @@ export function normalizeRunningHubTaskResponse(payload: unknown, capability: Ru
     const record = unwrapQueryPayload(payload);
     const status = stringValue(record.status || record.taskStatus).toUpperCase();
     if (["FAILED", "FAIL", "CANCELLED", "CANCELED"].includes(status)) {
-        return { status: "failed", error: stringValue(record.errorMessage || record.failedReason || record.msg) || "RunningHub 任务失败" };
+        const validation = parseValidationFailure(record);
+        const error = stringValue(record.errorMessage || (typeof record.failedReason === "string" ? record.failedReason : "") || record.msg) || "RunningHub 任务失败";
+        return {
+            status: "failed",
+            error: validation ? `${error}：字段 ${validation.fieldName} 的值 ${validation.value} 不在可选项中（可选：${validation.options.join("、")}）` : error,
+            ...(validation ? { validation } : {}),
+        };
     }
     if (!["SUCCESS", "SUCCEEDED", "COMPLETED"].includes(status)) return { status: "pending" };
     const urls = (Array.isArray(record.results) ? record.results : []).flatMap((item) => {
@@ -226,6 +237,18 @@ function unwrapPayload(payload: unknown): UnknownRecord {
     if (!isRecord(payload)) throw new Error("RunningHub 元数据格式无效");
     if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0") throw new Error(stringValue(payload.msg || payload.message) || "RunningHub 请求失败");
     return isRecord(payload.data) ? payload.data : payload;
+}
+
+// ComfyUI validation failures carry the offending field and its valid enum list in the traceback, e.g. "aspect_ratio: '16:9' not in ['1:1 (Square)', ...]".
+function parseValidationFailure(record: UnknownRecord): RunningHubValidation | null {
+    if (!isRecord(record.failedReason)) return null;
+    const nodeId = stringValue(record.failedReason.node_id);
+    const traceback = Array.isArray(record.failedReason.traceback) ? record.failedReason.traceback.map(String).join("\n") : stringValue(record.failedReason.traceback);
+    const match = traceback.match(/([\w ]+):\s*'([^']*)'\s+not in\s+\[([^\]]*)\]/);
+    if (!nodeId || !match) return null;
+    const options = match[3].split(",").map((item) => item.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+    if (!options.length) return null;
+    return { nodeId, fieldName: match[1].trim(), value: match[2], options };
 }
 
 async function requestJson(config: RunningHubClientConfig, path: string, init: RequestInit, options?: RunningHubRequestOptions) {

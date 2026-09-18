@@ -105,6 +105,18 @@ export function RunningHubTargetManager({ channel, onModelsChange }: { channel: 
                                 <span className="text-xs text-stone-500">
                                     {model.runningHub?.kind === "workflow" ? t("config.channelEditor.runningHub.workflow") : t("config.channelEditor.runningHub.app")} · {model.runningHub?.targetId}
                                 </span>
+                                {model.runningHub?.kind === "workflow" && (
+                                    <Select
+                                        size="small"
+                                        value={model.runningHub.instanceType || "default"}
+                                        options={[
+                                            { label: t("config.channelEditor.runningHub.instanceDefault"), value: "default" },
+                                            { label: t("config.channelEditor.runningHub.instancePlus"), value: "plus" },
+                                            { label: t("config.channelEditor.runningHub.instanceUltra"), value: "ultra" },
+                                        ]}
+                                        onChange={(instanceType) => updateModel(modelIndex, { runningHub: { ...model.runningHub!, instanceType: instanceType as "default" | "plus" | "ultra" } })}
+                                    />
+                                )}
                                 <Button danger type="text" icon={<Trash2 className="size-4" />} onClick={() => onModelsChange(channel.models.filter((_, index) => index !== modelIndex))} />
                             </div>
                             <div className="mt-3 space-y-2">

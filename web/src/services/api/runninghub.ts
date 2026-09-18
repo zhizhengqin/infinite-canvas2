@@ -19,7 +19,9 @@ export type RunningHubTarget = {
     kind: RunningHubTargetKind;
     targetId: string;
     fields: RunningHubField[];
+    instanceType?: RunningHubInstanceType;
 };
+export type RunningHubInstanceType = "default" | "plus" | "ultra";
 
 export type RunningHubGenerationInputs = {
     prompt: string;
@@ -75,7 +77,7 @@ export async function uploadRunningHubMedia(config: RunningHubClientConfig, file
 
 export async function createRunningHubTask(config: RunningHubClientConfig, target: RunningHubTarget, nodeInfoList: RunningHubNodeInfo[], options?: RunningHubRequestOptions) {
     assertClientConfig(config);
-    const targetField = target.kind === "workflow" ? { workflowId: target.targetId } : { webappId: target.targetId };
+    const targetField = target.kind === "workflow" ? { workflowId: target.targetId, ...(target.instanceType ? { instanceType: target.instanceType } : {}) } : { webappId: target.targetId };
     const path = target.kind === "workflow" ? "/task/openapi/create" : "/task/openapi/ai-app/run";
     const payload = await requestJson(config, path, { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, ...targetField, nodeInfoList }) }, options);
     const data = unwrapPayload(payload);

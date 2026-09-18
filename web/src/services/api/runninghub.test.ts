@@ -253,9 +253,11 @@ describe("RunningHub HTTP client", () => {
         const nodeInfoList = [{ nodeId: "6", fieldName: "prompt", fieldValue: "test" }];
 
         expect(await createRunningHubTask(client, { kind: "workflow", targetId: "1904136902449209346", fields: [] }, nodeInfoList, { fetchImpl })).toBe("task-1");
-        expect(await createRunningHubTask(client, { kind: "app", targetId: "1877265245566922753", fields: [] }, nodeInfoList, { fetchImpl })).toBe("task-2");
+        expect(await createRunningHubTask(client, { kind: "workflow", targetId: "1904136902449209346", fields: [], instanceType: "plus" }, nodeInfoList, { fetchImpl })).toBe("task-2");
+        expect(await createRunningHubTask(client, { kind: "app", targetId: "1877265245566922753", fields: [], instanceType: "ultra" }, nodeInfoList, { fetchImpl })).toBe("task-3");
         expect(requests).toEqual([
             { url: "https://www.runninghub.cn/task/openapi/create", body: { apiKey: "member-key", workflowId: "1904136902449209346", nodeInfoList } },
+            { url: "https://www.runninghub.cn/task/openapi/create", body: { apiKey: "member-key", workflowId: "1904136902449209346", instanceType: "plus", nodeInfoList } },
             { url: "https://www.runninghub.cn/task/openapi/ai-app/run", body: { apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList } },
         ]);
     });

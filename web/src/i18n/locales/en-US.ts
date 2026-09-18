@@ -955,6 +955,9 @@ export default {
                 empty: "No workflow or AI app imported yet.",
                 mediaIndex: "No.",
                 runtimeValue: "Provided by canvas parameters at generation time",
+                instanceDefault: "Default instance 24G",
+                instancePlus: "Plus instance 48G",
+                instanceUltra: "Ultra instance 84G",
                 sources: {
                     prompt: "Prompt",
                     image: "Reference image",

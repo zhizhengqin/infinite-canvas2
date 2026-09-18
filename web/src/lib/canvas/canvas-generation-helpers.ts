@@ -1,6 +1,6 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
-import { ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, resolveImageUrl, uploadImage, withAgentToken } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
@@ -48,7 +48,7 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
             const metadata = node.metadata;
             const content = metadata?.content;
             if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) return { ...node, metadata: { ...metadata, content: await resolveMediaUrl(metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
+            if (node.type !== CanvasNodeType.Image || !metadata || (!content && !metadata.storageKey)) return node;
             const images = await Promise.all(
                 (metadata.images || []).map(async (image) => {
                     if (!image.content) return image;
@@ -58,10 +58,33 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
             );
             if (metadata.storageKey) {
                 void ensureImagePreview(metadata.storageKey);
-                return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, content), images } };
+                return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, content || ""), images } };
             }
             if (!content.startsWith("data:image/")) return node;
             return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(content)) } };
+        }),
+    );
+}
+
+/** Resolve image nodes created by Agent ops: fill content from storageKey, or download remote/agent URLs into local storage. */
+export async function hydrateAgentImageNodes(nodes: CanvasNodeData[]) {
+    return Promise.all(
+        nodes.map(async (node) => {
+            const metadata = node.metadata;
+            if (node.type !== CanvasNodeType.Image || !metadata || metadata.content) return node;
+            if (metadata.storageKey) {
+                void ensureImagePreview(metadata.storageKey);
+                return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, "") } };
+            }
+            const url = metadata.imageUrl || metadata.src;
+            if (typeof url === "string" && /^https?:\/\//.test(url)) {
+                try {
+                    return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(withAgentToken(url))) } };
+                } catch {
+                    return node;
+                }
+            }
+            return node;
         }),
     );
 }

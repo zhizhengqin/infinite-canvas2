@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type MutableR
 import i18n from "@/i18n";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { hydrateAgentImageNodes } from "@/lib/canvas/canvas-generation-helpers";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransform } from "@/types/canvas";
 
@@ -60,6 +61,11 @@ export function useAgentBridge(params: AgentBridgeParams) {
             setSelectedConnectionId(null);
             setViewport(next.viewport);
             setContextMenu(null);
+            void hydrateAgentImageNodes(next.nodes).then((hydrated) => {
+                if (hydrated.every((node, index) => node === next.nodes[index])) return;
+                nodesRef.current = hydrated;
+                setNodes(hydrated);
+            });
             if (generationOps.length) {
                 queueMicrotask(() =>
                     generationOps.forEach((op) => {

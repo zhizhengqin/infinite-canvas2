@@ -96,3 +96,5 @@
 - Agent 对话消息必须同时按 `threadId`、`turnId` 和 `itemId` 归属；实时事件只用于补充未物化的 turn，历史快照成为权威后不得重复合并同一条消息。
 - Agent 通信协议版本与消息存储版本必须独立管理；消息存储格式升级时必须先备份再迁移，遇到未知版本、损坏清单或冲突备份时拒绝覆盖原文件，不得按记录数量或文件大小静默裁剪历史元数据。
 - 本地启动或浏览器验收时不要关闭用户已经打开的浏览器窗口或标签页；需要自动化验证时使用独立测试页面，避免打断用户当前页面和对话状态。
+- Agent 读取本机图片（素材入库、画布参考图）一律用 canvas-agent 的 `GET /agent/local-image?path=<绝对路径>`（常驻服务，需连接 Token，仅支持 avif/gif/jpg/png/webp）；不要为本机图片临时起文件服务。
+- 本机 canvas-agent 由 launchd 托管时，改完代码用 `canvas-agent/scripts/upgrade-local-agent.sh` 打包、安装并重启；不要直接 kill 常驻进程后不管。

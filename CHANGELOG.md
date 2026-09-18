@@ -3,7 +3,8 @@
 ## Unreleased
 
 + [新增] 本地 Agent 支持 Kimi Code：canvas-agent 经 ACP（`kimi acp`）驱动本机 Kimi Code CLI，配置弹窗新增「Agent」页签可在 Codex / Kimi Code 之间切换，线程、模型选择、权限审批、中断与图片附件同样可用；通信协议版本升至 7，需配套新版 canvas-agent 与前端。
-+ [新增] 本地 Agent 新增 `GET /agent/local-image` 按绝对路径读取本机图片（需连接 Token），MCP 的 `assets_add` 传入该地址时前端自动附带 Token，本机图片可直接入库「我的素材」，无需临时文件服务。
++ [新增] 本地 Agent 新增 `GET /agent/local-image` 按绝对路径读取本机图片（需连接 Token），MCP 的 `assets_add` 传入该地址时前端自动附带 Token，本机图片可直接入库「我的素材」，无需临时文件服务；图片素材的 `assets_add`/`assets_list` 返回 `storageKey`，可配合 `canvas_create_node` 的 `metadata.storageKey` 把素材直接放上画布。
++ [修复] Agent 通过 MCP 创建的图片节点仅有 `storageKey` 或远程 `imageUrl` 时显示空白：应用操作时即时解析 `storageKey`、下载远程图片入库（Agent 地址自动附带 Token），项目加载时的图片水合也不再跳过无 `content` 的节点。
 
 ## v0.19.0 - 2026-09-16
 

@@ -84,6 +84,8 @@ export type CanvasNodeMetadata = {
     videoTaskId?: string;
     videoTaskProvider?: "openai" | "gemini";
     groupId?: string;
+    imageUrl?: string; // Agent 创建图片节点时传入的远程/本机图片地址，应用时下载入库。
+    src?: string; // imageUrl 的别名，兼容 Agent 传入。
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
 

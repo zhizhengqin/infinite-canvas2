@@ -2,13 +2,12 @@ import type { NavigateFunction } from "react-router-dom";
 
 import i18n from "@/i18n";
 import { fetchPrompts } from "@/services/api/prompts";
-import { uploadImage } from "@/services/image-storage";
+import { uploadImage, withAgentToken } from "@/services/image-storage";
 import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useAgentStore } from "@/stores/use-agent-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -289,23 +288,10 @@ function listAssets(input: SiteToolInput) {
         createdAt: asset.createdAt,
         updatedAt: asset.updatedAt,
         coverUrl: asset.coverUrl || undefined,
+        storageKey: "storageKey" in asset.data ? asset.data.storageKey : undefined,
         content: asset.kind === "text" ? asset.data.content : undefined,
     }));
     return { total: filtered.length, page, pageSize, items };
-}
-
-// Local images served by the connected Canvas Agent need the connect token; append it for agent URLs.
-function withAgentToken(imageUrl: string) {
-    const { url, token } = useAgentStore.getState();
-    const base = url.trim().replace(/\/+$/, "");
-    if (!base || !token.trim() || !imageUrl.startsWith(`${base}/`)) return imageUrl;
-    try {
-        const parsed = new URL(imageUrl);
-        if (!parsed.searchParams.has("token")) parsed.searchParams.set("token", token.trim());
-        return parsed.toString();
-    } catch {
-        return imageUrl;
-    }
 }
 
 async function addAsset(input: SiteToolInput) {
@@ -332,7 +318,7 @@ async function addAsset(input: SiteToolInput) {
             throw new Error(siteText("imageReadFailed"));
         }
         const id = store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
-        return { ok: true, id, kind: "image" };
+        return { ok: true, id, kind: "image", storageKey: stored.storageKey, width: stored.width, height: stored.height };
     }
     throw new Error(siteText("assetKindUnsupported"));
 }

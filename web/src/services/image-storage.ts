@@ -3,7 +3,22 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { withLocalProxy } from "@/stores/use-config-store";
+import { useAgentStore } from "@/stores/use-agent-store";
 import { createImageThumbnail } from "@/lib/image-thumbnail";
+
+// Image URLs served by the connected local Canvas Agent (e.g. /agent/local-image) need the connect token; append it for agent URLs.
+export function withAgentToken(imageUrl: string) {
+    const { url, token } = useAgentStore.getState();
+    const base = url.trim().replace(/\/+$/, "");
+    if (!base || !token.trim() || !imageUrl.startsWith(`${base}/`)) return imageUrl;
+    try {
+        const parsed = new URL(imageUrl);
+        if (!parsed.searchParams.has("token")) parsed.searchParams.set("token", token.trim());
+        return parsed.toString();
+    } catch {
+        return imageUrl;
+    }
+}
 
 export type UploadedImage = {
     url: string;

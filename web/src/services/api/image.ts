@@ -1,8 +1,9 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
+import { runRunningHubGeneration } from "./runninghub";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -369,11 +370,26 @@ function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "gen
     return withLocalProxy(`${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`);
 }
 
-function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
+function geminiHeaders(config: Pick<AiConfig, "apiKey" | "baseUrl">) {
+    const isApiyi = new URL(config.baseUrl).hostname === "api.apiyi.com";
     return {
-        "x-goog-api-key": config.apiKey,
+        ...(isApiyi ? { Authorization: `Bearer ${config.apiKey}` } : { "x-goog-api-key": config.apiKey }),
         "Content-Type": "application/json",
     };
+}
+
+function shouldUseGeminiImageApi(config: Pick<AiConfig, "apiFormat" | "baseUrl" | "model">) {
+    if (config.apiFormat === "gemini") return true;
+    try {
+        return new URL(config.baseUrl).hostname === "api.apiyi.com" && /^gemini-.*image/i.test(config.model.trim());
+    } catch {
+        return false;
+    }
+}
+
+function geminiImageRequestConfig(config: AiConfig): AiConfig {
+    if (config.apiFormat === "gemini") return config;
+    return { ...config, baseUrl: config.baseUrl.trim().replace(/\/v1\/?$/i, "") };
 }
 
 function withSystemMessage<T extends ResponseInputMessage>(config: AiConfig, messages: T[]): ResponseInputMessage[] {
@@ -724,12 +740,23 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, selectedModel);
+    if (requestConfig.apiFormat === "runninghub") {
+        const target = resolveRunningHubTarget(config, selectedModel);
+        if (!target) throw new Error("RunningHub 生成目标未配置");
+        const urls = await runRunningHubGeneration(requestConfig, target, "image", {
+            prompt: withSystemPrompt(requestConfig, prompt),
+            ratio: config.size,
+            resolution: config.quality,
+        }, {}, options);
+        return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = /gemini/i.test(requestConfig.model) ? config.size : resolveRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -746,9 +773,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (shouldUseGeminiImageApi(requestConfig)) {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, options);
+            return await requestGeminiImages(geminiImageRequestConfig(requestConfig), prompt, [], n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -784,13 +811,28 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, selectedModel);
+    if (requestConfig.apiFormat === "runninghub") {
+        const target = resolveRunningHubTarget(config, selectedModel);
+        if (!target) throw new Error("RunningHub 生成目标未配置");
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const urls = await runRunningHubGeneration(
+            requestConfig,
+            target,
+            "image",
+            { prompt: withSystemPrompt(requestConfig, requestPrompt), ratio: config.size, resolution: config.quality },
+            { images: files },
+            options,
+        );
+        return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = /gemini/i.test(requestConfig.model) ? config.size : resolveRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -808,9 +850,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (shouldUseGeminiImageApi(requestConfig)) {
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+            return await requestGeminiImages(geminiImageRequestConfig(requestConfig), requestPrompt, references, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }

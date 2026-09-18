@@ -7,6 +7,7 @@ import type { NodeGenerationInput } from "@/components/canvas/canvas-node-genera
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import type { ReferenceImage } from "@/types/image";
+import type { VideoGenerationTask } from "@/services/api/video";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export function imageExtension(dataUrl: string) {
@@ -148,6 +149,10 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 
 export function hasResumableVideoTask(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoTaskId) && !node.metadata?.content;
+}
+
+export function resumableVideoTask(id: string, provider: CanvasNodeMetadata["videoTaskProvider"], model: string): VideoGenerationTask {
+    return { id, provider: provider || "openai", model };
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
++ [修复] API易的 Gemini 图片模型改走原生 `generateContent`，按 `imageConfig` 发送画幅和分辨率，不再因 OpenAI 图片接口忽略比例而回退成正方形。
++ [修复] RunningHub 视频任务在画布刷新后保持原提供方，可继续查询同一任务而不误走 OpenAI 接口。
++ [修复] RunningHub 导入支持社区 `/post/<ID>` 分享链接和 `apiType=5` 工作流 API 页面链接。
 + [新增] 新版无限画布支持原生 RunningHub 渠道，可导入工作流或 AI 应用、映射画布输入并将图片或视频结果写回现有生成链路。
 
 ## v0.18.0 - 2026-09-07

@@ -137,9 +137,11 @@ export function parseRunningHubTargetInput(input: string, explicitKind?: Running
         throw new Error("请输入有效的 RunningHub 链接或数字 ID");
     }
     if (url.hostname !== "runninghub.cn" && url.hostname !== "www.runninghub.cn") throw new Error("只支持 RunningHub 官方链接");
-    const match = url.pathname.match(/^\/(workflow|ai-detail)\/(\d+)(?:\/|$)/);
-    if (!match) throw new Error("无法识别 RunningHub 链接中的目标 ID");
-    return { kind: match[1] === "workflow" ? ("workflow" as const) : ("app" as const), targetId: match[2] };
+    const match = url.pathname.match(/^\/(workflow|post|ai-detail)\/(\d+)(?:\/|$)/);
+    if (match) return { kind: match[1] === "ai-detail" ? ("app" as const) : ("workflow" as const), targetId: match[2] };
+    const apiDetailMatch = url.pathname.match(/^\/call-api\/api-detail\/(\d+)(?:\/|$)/);
+    if (apiDetailMatch && url.searchParams.get("apiType") === "5") return { kind: "workflow" as const, targetId: apiDetailMatch[1] };
+    throw new Error("无法识别 RunningHub 链接中的目标 ID");
 }
 
 export function validateRunningHubImportInput(input: { apiKey: string; input: string; explicitKind?: RunningHubTargetKind; name: string; existingNames: string[] }) {

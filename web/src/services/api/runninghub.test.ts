@@ -26,6 +26,14 @@ describe("parseRunningHubTargetInput", () => {
         expect(parseRunningHubTargetInput("https://www.runninghub.cn/ai-detail/1877265245566922753?inviteCode=test")).toEqual({ kind: "app", targetId: "1877265245566922753" });
     });
 
+    test("parses workflow community post links", () => {
+        expect(parseRunningHubTargetInput("https://www.runninghub.cn/post/2092878871120142337/?inviteCode=cn-v1065")).toEqual({ kind: "workflow", targetId: "2092878871120142337" });
+    });
+
+    test("parses apiType 5 workflow API detail links", () => {
+        expect(parseRunningHubTargetInput("https://www.runninghub.cn/call-api/api-detail/2092878871120142337?apiType=5")).toEqual({ kind: "workflow", targetId: "2092878871120142337" });
+    });
+
     test("requires an explicit kind for a bare ID", () => {
         expect(() => parseRunningHubTargetInput("1904136902449209346")).toThrow("请选择");
         expect(parseRunningHubTargetInput("1904136902449209346", "workflow")).toEqual({ kind: "workflow", targetId: "1904136902449209346" });

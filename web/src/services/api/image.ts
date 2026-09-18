@@ -367,11 +367,26 @@ function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "gen
     return withLocalProxy(`${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`);
 }
 
-function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
+function geminiHeaders(config: Pick<AiConfig, "apiKey" | "baseUrl">) {
+    const isApiyi = new URL(config.baseUrl).hostname === "api.apiyi.com";
     return {
-        "x-goog-api-key": config.apiKey,
+        ...(isApiyi ? { Authorization: `Bearer ${config.apiKey}` } : { "x-goog-api-key": config.apiKey }),
         "Content-Type": "application/json",
     };
+}
+
+function shouldUseGeminiImageApi(config: Pick<AiConfig, "apiFormat" | "baseUrl" | "model">) {
+    if (config.apiFormat === "gemini") return true;
+    try {
+        return new URL(config.baseUrl).hostname === "api.apiyi.com" && /^gemini-.*image/i.test(config.model.trim());
+    } catch {
+        return false;
+    }
+}
+
+function geminiImageRequestConfig(config: AiConfig): AiConfig {
+    if (config.apiFormat === "gemini") return config;
+    return { ...config, baseUrl: config.baseUrl.trim().replace(/\/v1\/?$/i, "") };
 }
 
 function withSystemMessage<T extends ResponseInputMessage>(config: AiConfig, messages: T[]): ResponseInputMessage[] {
@@ -738,7 +753,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = /gemini/i.test(requestConfig.model) ? config.size : resolveRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -755,9 +770,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (shouldUseGeminiImageApi(requestConfig)) {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, options);
+            return await requestGeminiImages(geminiImageRequestConfig(requestConfig), prompt, [], n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -813,7 +828,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = /gemini/i.test(requestConfig.model) ? config.size : resolveRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -831,9 +846,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (shouldUseGeminiImageApi(requestConfig)) {
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+            return await requestGeminiImages(geminiImageRequestConfig(requestConfig), requestPrompt, references, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }

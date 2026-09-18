@@ -378,7 +378,18 @@ async function generateImage({
   };
   let aspectRatio = "1:1";
   if (size && size !== "auto") {
-    aspectRatio = aspectRatioMap[size] || size;
+    const dimensions = size.match(/^(\\d+)x(\\d+)$/i);
+    if (dimensions) {
+      const target = Number(dimensions[1]) / Number(dimensions[2]);
+      const ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+      aspectRatio = ratios.reduce((best, ratio) => {
+        const [width, height] = ratio.split(":").map(Number);
+        const [bestWidth, bestHeight] = best.split(":").map(Number);
+        return Math.abs(width / height - target) < Math.abs(bestWidth / bestHeight - target) ? ratio : best;
+      });
+    } else {
+      aspectRatio = aspectRatioMap[size] || size;
+    }
   }
   let imageSize = "1K";
   if (imageSizeMap[quality]) {

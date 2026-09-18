@@ -191,8 +191,18 @@ export function buildRunningHubNodeInfoList(fields: RunningHubField[], inputs: R
             if (field.required) throw new Error(`缺少必填字段：${field.label}`);
             return [];
         }
-        return [{ nodeId: field.nodeId, fieldName: field.fieldName, fieldValue: typedFieldValue(field.fieldType, value) }];
+        return [{ nodeId: field.nodeId, fieldName: field.fieldName, fieldValue: typedFieldValue(field.fieldType, matchFieldOption(field, value)) }];
     });
+}
+
+// RunningHub workflow enum fields expect their own option labels (e.g. "16:9 (Widescreen)"); map bare values like "16:9" onto them.
+function matchFieldOption(field: RunningHubField, value: string | boolean) {
+    if (typeof value !== "string" || !field.options?.length || field.options.includes(value)) return value;
+    const normalize = (text: string) => text.toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, "");
+    const target = normalize(value);
+    const match = field.options.find((option) => normalize(option) === target);
+    if (match) return match;
+    throw new Error(`字段「${field.label}」的值 ${value} 不在工作流可选项中（可选：${field.options.join("、")}）`);
 }
 
 export function normalizeRunningHubTaskResponse(payload: unknown, capability: RunningHubCapability): RunningHubTaskState {

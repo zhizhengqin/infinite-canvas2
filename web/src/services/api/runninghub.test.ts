@@ -133,6 +133,13 @@ describe("buildRunningHubNodeInfoList", () => {
         const fields: RunningHubField[] = [{ nodeId: "9", fieldName: "image", fieldType: "IMAGE", label: "首帧", defaultValue: "", source: "image", sourceIndex: 0, required: true }];
         expect(() => buildRunningHubNodeInfoList(fields, { prompt: "test" })).toThrow("首帧");
     });
+
+    test("maps bare ratio values onto workflow option labels", () => {
+        const fields: RunningHubField[] = [{ nodeId: "5", fieldName: "aspectRatio", fieldType: "SELECT", label: "画幅比例", defaultValue: "", source: "ratio", required: true, options: ["16:9 (Widescreen)", "9:16 (Portrait)", "1:1 (Square)"] }];
+        expect(buildRunningHubNodeInfoList(fields, { prompt: "test", ratio: "16:9" })).toEqual([{ nodeId: "5", fieldName: "aspectRatio", fieldValue: "16:9 (Widescreen)" }]);
+        expect(buildRunningHubNodeInfoList(fields, { prompt: "test", ratio: "9:16 (Portrait)" })).toEqual([{ nodeId: "5", fieldName: "aspectRatio", fieldValue: "9:16 (Portrait)" }]);
+        expect(() => buildRunningHubNodeInfoList(fields, { prompt: "test", ratio: "4:3" })).toThrow("4:3");
+    });
 });
 
 describe("normalizeRunningHubTaskResponse", () => {

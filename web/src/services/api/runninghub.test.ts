@@ -270,8 +270,15 @@ describe("RunningHub HTTP client", () => {
                 return jsonResponse({ taskId: "task-original", status: "SUCCESS", errorCode: "", errorMessage: "", results: [{ url: "https://cdn.example/result.mp4", outputType: "mp4" }] });
             },
         });
-        expect(body).toEqual({ taskId: "task-original" });
+        expect(body).toEqual({ apiKey: "member-key", taskId: "task-original" });
         expect(state).toEqual({ status: "completed", urls: ["https://cdn.example/result.mp4"] });
+    });
+
+    test("treats an HTTP 200 with a non-empty errorCode as failure instead of polling forever", async () => {
+        const state = await queryRunningHubTask(client, "task-x", "video", {
+            fetchImpl: async () => jsonResponse({ taskId: "task-x", status: "", errorCode: "806", errorMessage: "APIKEY_USER_NOT_FOUND", results: null }),
+        });
+        expect(state).toEqual({ status: "failed", error: "APIKEY_USER_NOT_FOUND" });
     });
 
     test("polls one task without resubmitting and stops on success", async () => {
@@ -346,7 +353,7 @@ describe("image and video service dispatch", () => {
             const task = await createVideoGenerationTask(config, "slow camera move");
             expect(task).toEqual({ id: "video-task", provider: "runninghub", model: config.model });
             expect(await pollVideoGenerationTask(config, task)).toEqual({ status: "completed", result: { url: "https://cdn.example/result.mp4", mimeType: "video/mp4" } });
-            expect(bodies).toEqual([{ apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "slow camera move" }] }, { taskId: "video-task" }]);
+            expect(bodies).toEqual([{ apiKey: "member-key", webappId: "1877265245566922753", nodeInfoList: [{ nodeId: "1", fieldName: "prompt", fieldValue: "slow camera move" }] }, { apiKey: "member-key", taskId: "video-task" }]);
         } finally {
             globalThis.fetch = originalFetch;
         }

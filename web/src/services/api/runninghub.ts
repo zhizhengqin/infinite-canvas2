@@ -88,7 +88,7 @@ export async function createRunningHubTask(config: RunningHubClientConfig, targe
 
 export async function queryRunningHubTask(config: RunningHubClientConfig, taskId: string, capability: RunningHubCapability, options?: RunningHubRequestOptions) {
     assertClientConfig(config);
-    const payload = await requestJson(config, "/openapi/v2/query", { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ taskId }) }, options);
+    const payload = await requestJson(config, "/openapi/v2/query", { method: "POST", headers: jsonHeaders(config), body: JSON.stringify({ apiKey: config.apiKey, taskId }) }, options);
     return normalizeRunningHubTaskResponse(payload, capability);
 }
 
@@ -322,6 +322,8 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal) {
 
 function unwrapQueryPayload(payload: unknown): UnknownRecord {
     if (!isRecord(payload)) return {};
+    const errorCode = scalarString(payload.errorCode);
+    if (errorCode && errorCode !== "0") return { status: "FAILED", errorMessage: stringValue(payload.errorMessage || payload.msg || payload.message) || `RunningHub 查询失败（${errorCode}）` };
     if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0") return { status: "FAILED", errorMessage: stringValue(payload.msg || payload.message) };
     return isRecord(payload.data) ? payload.data : payload;
 }

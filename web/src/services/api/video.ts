@@ -9,6 +9,7 @@ import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, learnRunningHubValidationOptions, modelOptionName, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { createRunningHubGenerationTask, queryRunningHubTask, waitForRunningHubTask } from "./runninghub";
+import { createWanliVideo, downloadWanliVideo, queryWanliVideo } from "./wanli";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -20,7 +21,7 @@ type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin" | "runninghub"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin" | "runninghub" | "wanli"; model: string };
 type GeminiInlineData = { bytesBase64Encoded: string; mimeType: string };
 type GeminiVideoOperation = {
     name?: string;
@@ -49,6 +50,16 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    // Wanli 只查询原任务，刷新或中止不会重新提交，并按文档每 30 秒查询。
+    if (task.provider === "wanli") {
+        while (true) {
+            if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            const state = await pollVideoGenerationTask(config, task, options);
+            if (state.status === "completed") return state.result;
+            if (state.status === "failed") throw videoTaskFailed(state.error);
+            await delay(30000, options?.signal);
+        }
+    }
     if (task.provider === "runninghub") {
         const requestConfig = resolveModelRequestConfig(config, task.model);
         const [url] = await waitForRunningHubTask(requestConfig, task.id, "video", { ...options, onFailed: (state) => learnRunningHubValidationOptions(task.model, state) });
@@ -81,6 +92,22 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (requestConfig.apiFormat === "wanli") {
+        const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
+        const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
+        const id = await createWanliVideo(requestConfig, {
+            prompt,
+            ratio: videoAspectRatio(config.size),
+            resolution: normalizeVideoResolution(config.vquality),
+            duration: Number(normalizeVideoSeconds(config.videoSeconds)),
+            images,
+            videos,
+            audios,
+            signal: options?.signal,
+        });
+        return { id, provider: "wanli", model: selectedModel };
+    }
     if (requestConfig.apiFormat === "runninghub") {
         const target = resolveRunningHubTarget(config, selectedModel);
         if (!target) throw new Error("RunningHub 生成目标未配置");
@@ -108,6 +135,13 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    if (task.provider === "wanli") {
+        const requestConfig = resolveModelRequestConfig(config, task.model);
+        const state = await queryWanliVideo(requestConfig, task.id, options?.signal);
+        if (state.status === "failed") return { status: "failed", error: typeof state.error === "string" ? state.error : state.error?.message || "Wanli 视频生成失败" };
+        if (state.status === "succeeded") return { status: "completed", result: { blob: await downloadWanliVideo(requestConfig, state, options?.signal), mimeType: "video/mp4" } };
+        return { status: "pending" };
+    }
     if (task.provider === "plugin") {
         const result = pluginVideoResults.get(task.id);
         return result ? { status: "completed", result } : { status: "failed", error: apiText("pluginVideoExpired") };
@@ -126,7 +160,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
-    if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
+    if (!config.apiKey.trim() && config.authMode !== "dreammaker-account") throw new Error(apiText("apiKeyRequired"));
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
@@ -189,7 +223,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
+    body.append("size", config.apiFormat === "wanli" ? videoAspectRatio(config.size) : normalizeVideoSize(config.size, config.vquality) || "1280x720");
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
     body.append("watermark", String(boolConfig(config.videoWatermark, false)));
@@ -215,7 +249,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
         const url = videoResultUrl(video);
-        if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
+        if (url) return { status: "completed", result: await videoResultFromUrl(url, options, config) };
         if (video.status === "completed") {
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
@@ -228,13 +262,15 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     }
 }
 
-async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
+async function videoResultFromUrl(url: string, options?: RequestOptions, config?: AiConfig): Promise<VideoGenerationResult> {
     try {
-        const response = await axios.get<Blob>(withLocalProxy(url), { responseType: "blob", signal: options?.signal });
-        await assertVideoBlob(response.data);
-        return { blob: response.data };
+        const response = await axios.get<Blob | ArrayBuffer>(withLocalProxy(url), { headers: config?.apiFormat === "wanli" ? aiHeaders(config) : undefined, responseType: config?.apiFormat === "wanli" ? "arraybuffer" : "blob", signal: options?.signal });
+        const contentType = response.headers["content-type"];
+        const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: typeof contentType === "string" ? contentType : "video/mp4" });
+        await assertVideoBlob(blob);
+        return { blob };
     } catch (error) {
-        if (axios.isCancel(error) || options?.signal?.aborted) throw error;
+        if (axios.isCancel(error) || options?.signal?.aborted || config?.apiFormat === "wanli") throw error;
         return { url, mimeType: "video/mp4" };
     }
 }

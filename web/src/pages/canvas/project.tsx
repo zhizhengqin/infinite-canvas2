@@ -31,6 +31,7 @@ import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/can
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
+import { CanvasVideoUpscaleDialog } from "@/components/canvas/canvas-video-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
@@ -249,6 +250,7 @@ function InfiniteCanvasPage() {
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
+    const [videoUpscaleNodeId, setVideoUpscaleNodeId] = useState<string | null>(null);
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
@@ -727,6 +729,7 @@ function InfiniteCanvasPage() {
     const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
     const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
+    const videoUpscaleNode = videoUpscaleNodeId ? nodeById.get(videoUpscaleNodeId) || null : null;
     const superResolveNode = superResolveNodeId ? nodeById.get(superResolveNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
@@ -2066,6 +2069,61 @@ function InfiniteCanvasPage() {
         setDialogNodeId(childId);
     }, []);
 
+    const upscaleVideoNode = useCallback(
+        async (node: CanvasNodeData, model: string) => {
+            if (!node.metadata?.content) return;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "video"), model, vquality: "1080", count: "1" };
+            if (!isAiConfigReady(generationConfig, model)) {
+                openConfigDialog(true);
+                return;
+            }
+            const childId = nanoid();
+            const nodeSize = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+            const prompt = t("canvas.projectPage.videoUpscalePrompt");
+            const source: ReferenceVideo = {
+                id: node.id,
+                name: `${node.title || node.id}.mp4`,
+                type: node.metadata.mimeType || "video/mp4",
+                url: node.metadata.content,
+                storageKey: node.metadata.storageKey,
+                bytes: node.metadata.bytes,
+                width: node.metadata.naturalWidth,
+                height: node.metadata.naturalHeight,
+                durationMs: node.metadata.durationMs,
+            };
+            setVideoUpscaleNodeId(null);
+            setRunningNodeId(childId);
+            setNodes((prev) => [
+                ...prev,
+                {
+                    id: childId,
+                    type: CanvasNodeType.Video,
+                    title: t("canvas.projectPage.videoUpscaleResult"),
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width: nodeSize.width,
+                    height: nodeSize.height,
+                    metadata: { prompt, status: NODE_STATUS_LOADING, model, vquality: "1080" },
+                },
+            ]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            setSelectedNodeIds(new Set([childId]));
+            setSelectedConnectionId(null);
+            const controller = startGenerationRequest(childId, node.id, childId);
+            try {
+                await completeVideoNodeTask(childId, generationConfig, prompt, [], controller.signal, { model, vquality: "1080" }, [source]);
+            } catch (error) {
+                if (isGenerationCanceled(error)) return;
+                const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                message.error(errorDetails);
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+            } finally {
+                finishGenerationRequest(childId, controller);
+                setRunningNodeId((current) => (current === childId ? null : current));
+            }
+        },
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+    );
+
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
             if (!node.metadata?.content) return;
@@ -3270,6 +3328,7 @@ function InfiniteCanvasPage() {
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
                     onUpscale={(node) => setUpscaleNodeId(node.id)}
+                    onUpscaleVideo={(node) => setVideoUpscaleNodeId(node.id)}
                     onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={handleNodeViewImage}
@@ -3364,6 +3423,10 @@ function InfiniteCanvasPage() {
 
                 {upscaleNode?.metadata?.content ? (
                     <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                ) : null}
+
+                {videoUpscaleNode?.metadata?.content ? (
+                    <CanvasVideoUpscaleDialog node={videoUpscaleNode} open={Boolean(videoUpscaleNode)} onClose={() => setVideoUpscaleNodeId(null)} onConfirm={(model) => void upscaleVideoNode(videoUpscaleNode!, model)} />
                 ) : null}
 
                 <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>

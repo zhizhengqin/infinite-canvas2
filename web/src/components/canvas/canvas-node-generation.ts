@@ -65,6 +65,18 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
 
 function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
+    // 纯引用列表（正文 + 媒体）直接展开正文，媒体通过附件传递。
+    const tokens = [...prompt.matchAll(/@\[node:([^\]]+)\]/g)];
+    if (tokens.length && !prompt.replace(/@\[node:[^\]]+\]/g, "").trim() && tokens.every((token) => inputByNodeId.has(token[1]))) {
+        const resources = flattenGenerationInputs(tokens.map((token) => inputByNodeId.get(token[1])!));
+        const texts = resources.filter((input) => input.type === "text");
+        if (texts.length === 1) {
+            const referenceImages = resources.flatMap((input) => input.image ? [input.image] : []);
+            const referenceVideos = resources.flatMap((input) => input.video ? [input.video] : []);
+            const referenceAudios = resources.flatMap((input) => input.audio ? [input.audio] : []);
+            return { prompt: texts[0].text || "", referenceImages, referenceVideos, referenceAudios, textCount: 1, imageCount: referenceImages.length, videoCount: referenceVideos.length, audioCount: referenceAudios.length };
+        }
+    }
     const selectedInputs: NodeGenerationResourceInput[] = [];
     const labelByNodeId = new Map<string, string>();
     const textBlocks: string[] = [];

@@ -3,10 +3,11 @@ import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, wanliModelLabel, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 import { RunningHubTargetManager } from "./runninghub-target-manager";
+import { DreamMakerAccountManager } from "./dreammaker-account-manager";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
 
@@ -19,6 +20,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
         { label: "RunningHub", value: "runninghub" },
+        { label: "Wanli AIGC", value: "wanli" },
     ];
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
@@ -28,6 +30,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
+    const isDreamMaker = draft.apiFormat === "openai" && /^https:\/\/dreammaker\.vobilemax\.cn\/?$/.test(draft.baseUrl.trim());
     const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
     const setModels = (models: ChannelModel[]) => patch({ models });
 
@@ -56,6 +59,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     return (
         <Drawer
             open={open}
+            destroyOnHidden
             width={640}
             title={t("config.channelEditor.title")}
             onClose={onClose}
@@ -82,11 +86,21 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
                 </label>
-                <label className="block md:col-span-2">
+                {isDreamMaker ? <div className="md:col-span-2">
+                    <div className="mb-2 text-sm font-medium">认证方式</div>
+                    <Segmented value={draft.authMode || "api-key"} options={[{ label: "API Key", value: "api-key" }, { label: "账号登录（自动续期）", value: "dreammaker-account" }]} onChange={value => patch({ authMode: value === "dreammaker-account" ? "dreammaker-account" : undefined })} />
+                </div> : null}
+                {isDreamMaker && draft.authMode === "dreammaker-account" ? <div className="md:col-span-2"><DreamMakerAccountManager /></div> : <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">{draft.apiFormat === "runninghub" ? t("config.channelEditor.runningHub.memberKey") : "API Key"}</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={draft.apiFormat === "runninghub" ? t("config.channelEditor.runningHub.keyPlaceholder") : "sk-..."} />
-                </label>
+                </label>}
             </div>
+
+            {draft.apiFormat === "wanli" ? (
+                <div className="mt-3 text-xs text-stone-500">
+                    {t("config.channelEditor.wanliProxyHint")} <a className="underline" href="https://wanliaigc.com/studio#api" target="_blank" rel="noreferrer">API 文档</a>
+                </div>
+            ) : null}
 
             {draft.apiFormat === "runninghub" ? (
                 <RunningHubTargetManager channel={draft} onModelsChange={setModels} />
@@ -107,7 +121,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                             draft.models.map((model) => (
                                 <div key={model.name} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
                                     <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>
-                                        {model.name}
+                                        {model.label || model.name}
                                     </span>
                                     <div className="flex shrink-0 items-center gap-2">
                                         <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />

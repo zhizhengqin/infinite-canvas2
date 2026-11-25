@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- [调整] 移除 Dola 与豆包帐号管理、渠道配置、视频生成适配及本地服务。
+
+- [新增] 画布视频节点新增 RunningHub VOSR2 超分渠道，支持 `.ai` 工作流链接、480P 到 1080P 预设及原任务恢复。
+- [修复] DreamMaker提供本机账号登录与自动续期，避免短期令牌过期中断既有视频任务查询。
+
+- [新增] 新增 Wanli AIGC 生图/生视频渠道，接入 GPT-image-2.5 与 Seedance 2.5 系列，支持参考素材、鉴权结果下载及画布任务恢复。
+- [修复] Wanli 视频改用原生任务接口，读取目录版本与报价、上传参考素材、按 30 秒查询原任务并鉴权下载，同时正确识别 fnko Seedance 1080p 模型为视频能力。
+- [优化] Wanli 模型选择界面显示易读名称、积分价格与规格，保留原始模型 ID 仅用于 API 提交。
+
+- [修复] 单个提示词配合多张参考图时直接提交真实正文，移除前置文本占位及独立图片编号，保留全部参考附件。
+
+- [修复] 生成提示词仅引用单个文本节点时直接展开正文，避免重复出现「文本1」标签。
+
+- [修复] 恢复本机外部 Codex 的画布 MCP 注册，并统一 Kimi Code 的本地 MCP 入口，附调用验证和重载说明。
+
 + [新增] 本地 Agent 支持 Kimi Code：canvas-agent 经 ACP（`kimi acp`）驱动本机 Kimi Code CLI，配置弹窗新增「Agent」页签可在 Codex / Kimi Code 之间切换，线程、模型选择、权限审批、中断与图片附件同样可用；通信协议版本升至 7，需配套新版 canvas-agent 与前端。
 + [新增] 本地 Agent 新增 `GET /agent/local-image` 按绝对路径读取本机图片（需连接 Token），MCP 的 `assets_add` 传入该地址时前端自动附带 Token，本机图片可直接入库「我的素材」，无需临时文件服务；图片素材的 `assets_add`/`assets_list` 返回 `storageKey`，可配合 `canvas_create_node` 的 `metadata.storageKey` 把素材直接放上画布。
 + [修复] Agent 通过 MCP 创建的图片节点仅有 `storageKey` 或远程 `imageUrl` 时显示空白：应用操作时即时解析 `storageKey`、下载远程图片入库（Agent 地址自动附带 Token），项目加载时的图片水合也不再跳过无 `content` 的节点。
@@ -13,7 +28,6 @@
 + [新增] RunningHub 任务因枚举校验失败时，错误信息直接列出工作流可选项，并自动把该字段的选项表学回渠道配置，后续生成自动按正确标签提交。
 + [新增] RunningHub 工作流条目可选实例规格（默认 24G / Plus 48G / Ultra 84G），工作流显存不足（OOM）时可切换更大实例重新生成。
 + [修复] RunningHub 任务查询在请求体补上 apiKey（仅带头鉴权会被返回 806 且 HTTP 200），并把非空 errorCode 识别为失败，不再让成功任务在画布上永远停在「生成中」。
-
 ## v0.19.0 - 2026-09-16
 
 + [优化] 画布图片、元素列表、节点参考栏、资产卡片和生图历史改用 WebP 缩略图渲染，避免反复解码原图。

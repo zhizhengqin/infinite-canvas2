@@ -52,6 +52,20 @@ export type RunningHubRequestOptions = {
 type UnknownRecord = Record<string, unknown>;
 const RUNNINGHUB_POLL_INTERVAL_MS = 5_000;
 const RUNNINGHUB_MAX_POLL_ATTEMPTS = 360;
+export const RUNNINGHUB_VOSR2_WORKFLOW_ID = "2117210764082679809";
+export const RUNNINGHUB_VOSR2_MODEL_NAME = "VOSR2 480P → 1080P";
+
+export function createRunningHubVosr2Target(): RunningHubTarget {
+    return {
+        kind: "workflow",
+        targetId: RUNNINGHUB_VOSR2_WORKFLOW_ID,
+        fields: [
+            { nodeId: "18", fieldName: "video", fieldType: "VIDEO", label: "源视频", defaultValue: "", source: "video", sourceIndex: 0, required: true },
+            { nodeId: "22", fieldName: "size", fieldType: "NUMBER", label: "超分前长边", defaultValue: "960", source: "constant", required: true },
+            { nodeId: "8", fieldName: "upscale", fieldType: "NUMBER", label: "VOSR2 放大倍数", defaultValue: "2", source: "constant", required: true },
+        ],
+    };
+}
 
 export async function fetchRunningHubTarget(config: RunningHubClientConfig, kind: RunningHubTargetKind, targetId: string, options?: RunningHubRequestOptions) {
     assertClientConfig(config);
@@ -143,8 +157,8 @@ export function parseRunningHubTargetInput(input: string, explicitKind?: Running
     } catch {
         throw new Error("请输入有效的 RunningHub 链接或数字 ID");
     }
-    if (url.hostname !== "runninghub.cn" && url.hostname !== "www.runninghub.cn") throw new Error("只支持 RunningHub 官方链接");
-    const match = url.pathname.match(/^\/(workflow|post|ai-detail)\/(\d+)(?:\/|$)/);
+    if (!["runninghub.cn", "www.runninghub.cn", "runninghub.ai", "www.runninghub.ai"].includes(url.hostname)) throw new Error("只支持 RunningHub 官方链接");
+    const match = url.pathname.match(/^\/(?:zh-cn\/)?(workflow|post|ai-detail)\/(\d+)(?:\/|$)/);
     if (match) return { kind: match[1] === "ai-detail" ? ("app" as const) : ("workflow" as const), targetId: match[2] };
     const apiDetailMatch = url.pathname.match(/^\/call-api\/api-detail\/(\d+)(?:\/|$)/);
     if (apiDetailMatch && url.searchParams.get("apiType") === "5") return { kind: "workflow" as const, targetId: apiDetailMatch[1] };

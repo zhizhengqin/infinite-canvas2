@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
     buildRunningHubNodeInfoList,
     createRunningHubTask,
+    createRunningHubVosr2Target,
     fetchRunningHubTarget,
     normalizeRunningHubFields,
     normalizeRunningHubTaskResponse,
@@ -24,6 +25,11 @@ describe("parseRunningHubTargetInput", () => {
     test("parses official workflow and AI app links", () => {
         expect(parseRunningHubTargetInput("https://www.runninghub.cn/workflow/1904136902449209346")).toEqual({ kind: "workflow", targetId: "1904136902449209346" });
         expect(parseRunningHubTargetInput("https://www.runninghub.cn/ai-detail/1877265245566922753?inviteCode=test")).toEqual({ kind: "app", targetId: "1877265245566922753" });
+    });
+
+    test("parses localized international workflow links", () => {
+        expect(parseRunningHubTargetInput("https://www.runninghub.ai/zh-cn/workflow/2117210764082679809?source=workspace")).toEqual({ kind: "workflow", targetId: "2117210764082679809" });
+        expect(parseRunningHubTargetInput("https://runninghub.ai/workflow/2117210764082679809")).toEqual({ kind: "workflow", targetId: "2117210764082679809" });
     });
 
     test("parses workflow community post links", () => {
@@ -126,6 +132,14 @@ describe("buildRunningHubNodeInfoList", () => {
             { nodeId: "2", fieldName: "image", fieldValue: "second.png" },
             { nodeId: "3", fieldName: "seconds", fieldValue: 8 },
             { nodeId: "4", fieldName: "mode", fieldValue: "fast" },
+        ]);
+    });
+
+    test("maps VOSR2 video input and 1080P upscale constants", () => {
+        expect(buildRunningHubNodeInfoList(createRunningHubVosr2Target().fields, { prompt: "", videos: ["openapi/source.mp4"] })).toEqual([
+            { nodeId: "18", fieldName: "video", fieldValue: "openapi/source.mp4" },
+            { nodeId: "22", fieldName: "size", fieldValue: 960 },
+            { nodeId: "8", fieldName: "upscale", fieldValue: 2 },
         ]);
     });
 

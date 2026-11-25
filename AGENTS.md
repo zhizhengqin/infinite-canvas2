@@ -98,3 +98,5 @@
 - 本地启动或浏览器验收时不要关闭用户已经打开的浏览器窗口或标签页；需要自动化验证时使用独立测试页面，避免打断用户当前页面和对话状态。
 - Agent 读取本机图片（素材入库、画布参考图）一律用 canvas-agent 的 `GET /agent/local-image?path=<绝对路径>`（常驻服务，需连接 Token，仅支持 avif/gif/jpg/png/webp）；不要为本机图片临时起文件服务。
 - 本机 canvas-agent 由 launchd 托管时，改完代码用 `canvas-agent/scripts/upgrade-local-agent.sh` 打包、安装并重启；不要直接 kill 常驻进程后不管。
+
+- DreamMaker线上当前采用OAuth短期访问令牌与刷新令牌；账号接入应走本机账号会话自动续期，不把复制访问令牌当作长期API Key。已创建的视频任务遇鉴权中断时只查询原task_id恢复结果，不点击重试或重建任务。人工登录与安全验证由用户在官方窗口完成，账号会话不写入导出配置。

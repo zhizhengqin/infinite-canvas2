@@ -6,13 +6,14 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import type { RunningHubTarget, RunningHubValidation } from "@/services/api/runninghub";
 
-export type ApiCallFormat = "openai" | "gemini" | "runninghub";
+export type ApiCallFormat = "openai" | "gemini" | "runninghub" | "wanli";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ChannelModel = {
     name: string;
     capability: ModelCapability;
+    label?: string;
     script?: string;
     runningHub?: RunningHubTarget;
 };
@@ -22,6 +23,7 @@ export type ModelChannel = {
     name: string;
     baseUrl: string;
     apiKey: string;
+    authMode?: "dreammaker-account";
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
 };
@@ -30,6 +32,7 @@ export type AiConfig = {
     channelMode: "remote" | "local";
     baseUrl: string;
     apiKey: string;
+    authMode?: "dreammaker-account";
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
     model: string;
@@ -79,6 +82,24 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const RUNNINGHUB_BASE_URL = "https://www.runninghub.cn";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
+
+const WANLI_MODEL_LABELS: Record<string, string> = {
+    "ft-image-v1-186289ba9d3263010c69372f8939dd94": "GPT-image-2.5｜0.5 积分｜1K/2K/4K｜10 图",
+    "ft-image-v1-eb47192eb578f340043911005a06fb6e": "GPT-image-2.5 Flare｜3.5 积分｜1K/2K/4K｜10 图",
+    "ft-image-v1-3432bdee1a22da4ce8ff2bbfc6ef4c1d": "GPT-image-2.5 Sunburst｜3.5 积分｜1K/2K/4K｜10 图",
+    "ft-image-v1-5643c00d4116f22d1abb7d480dee4f68": "gpt-image-2.5｜1.5 积分｜固定规格｜8 图",
+    "ft-image-v1-3ef14ea5c90d0554999403af6e68485e": "gpt-image-2.5 Flare｜3.5 积分｜1K/2K/4K｜8 图",
+    "ft-image-v1-c8f0a7251222ba36c556bbbb1f84a6a8": "gpt-image-2.5 Sunburst｜3.5 积分｜1K/2K/4K｜8 图",
+    "ft-video-v1-b8a797753dd4c6bf8e5a69820b293848": "Seedance 2.5 满血｜480p 4 / 720p 4.8 积分/秒｜4–30 秒",
+    "ft-video-v1-99d13a482c1f6f0e71db1e36c4154b70": "Seedance 2.5 满血 720p 特价｜43.8 积分/次｜15/30 秒",
+    "fnko_32426c8b51857008933b1e2e85839dc5": "Seedance 2.5 满血 1080p 全能参考｜70 积分/次｜4–30 秒",
+    "ft-video-v1-756e0feb4b3e1f893726314109762123": "XN2 Seedance 2.5 满血｜480p 4 / 720p 4.8 积分/秒｜4–30 秒",
+    "ft-video-v1-451adae35b0c4a3d275c2c46394abc98": "官方 Seedance 2.5 满血 720p｜9.9 积分/秒｜4–30 秒",
+};
+
+export function wanliModelLabel(name: string) {
+    return WANLI_MODEL_LABELS[name];
+}
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -161,6 +182,7 @@ const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "im
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
 export function guessCapability(name: string): ModelCapability {
     const value = name.toLowerCase();
+    if (value === "fnko_32426c8b51857008933b1e2e85839dc5") return "video";
     if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
     if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
@@ -213,7 +235,7 @@ export function learnRunningHubValidationOptions(modelValue: string, state: { va
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    return Boolean(model.trim() && channel.baseUrl.trim() && (channel.apiKey.trim() || channel.authMode === "dreammaker-account"));
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -322,9 +344,10 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         if (!name || seen.has(name)) continue;
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
+        const label = typeof item === "string" ? undefined : item.label;
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
         const runningHub = typeof item === "string" ? undefined : item.runningHub;
-        result.push({ name, capability, script, runningHub });
+        result.push({ name, capability, label: label || wanliModelLabel(name), script, runningHub });
     }
     return result;
 }
@@ -336,6 +359,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         name: channel?.name?.trim() || i18n.t("config.channels.newName"),
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
+        authMode: channel?.authMode === "dreammaker-account" ? "dreammaker-account" : undefined,
         apiFormat,
         models: normalizeChannelModels(channel?.models),
     };
@@ -427,7 +451,8 @@ export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return value;
     const channel = config.channels.find((item) => item.id === decoded.channelId);
-    return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
+    const model = channel?.models.find((item) => item.name === decoded.model);
+    return channel ? `${model?.label || decoded.model}（${channel.name}）` : decoded.model;
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
@@ -460,12 +485,14 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         model: modelOptionName(value || config.model),
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
+        authMode: channel.authMode,
         apiFormat: channel.apiFormat,
     };
 }
 
 function normalizeChannels(config: AiConfig) {
-    const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
+    const storedChannels = Array.isArray(config.channels) ? config.channels : [];
+    const persistedChannels = storedChannels.filter((channel) => String(channel.apiFormat) !== "dola");
     const channels = persistedChannels.map((channel, index) =>
         createModelChannel({
             ...channel,
@@ -474,6 +501,7 @@ function normalizeChannels(config: AiConfig) {
             models: normalizeChannelModels(channel.models),
         }),
     );
+    if (!channels.length && storedChannels.length !== persistedChannels.length) return defaultConfig.channels;
     if (!channels.length) {
         channels.push(
             createModelChannel({
@@ -492,11 +520,12 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "runninghub") return RUNNINGHUB_BASE_URL;
+    if (apiFormat === "wanli") return "https://wanliaigc.com";
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "runninghub" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "runninghub" || apiFormat === "wanli" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

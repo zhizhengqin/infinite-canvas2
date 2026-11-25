@@ -1,9 +1,18 @@
 import { App, Button, Input, InputNumber, Segmented, Select } from "antd";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { fetchRunningHubTarget, validateRunningHubImportInput, type RunningHubField, type RunningHubFieldSource, type RunningHubTargetKind } from "@/services/api/runninghub";
+import {
+    createRunningHubVosr2Target,
+    fetchRunningHubTarget,
+    RUNNINGHUB_VOSR2_MODEL_NAME,
+    RUNNINGHUB_VOSR2_WORKFLOW_ID,
+    validateRunningHubImportInput,
+    type RunningHubField,
+    type RunningHubFieldSource,
+    type RunningHubTargetKind,
+} from "@/services/api/runninghub";
 import { useConfigStore, type ChannelModel, type ModelChannel } from "@/stores/use-config-store";
 
 export function RunningHubTargetManager({ channel, onModelsChange }: { channel: ModelChannel; onModelsChange: (models: ChannelModel[]) => void }) {
@@ -30,6 +39,16 @@ export function RunningHubTargetManager({ channel, onModelsChange }: { channel: 
             message.error(error instanceof Error ? error.message : t("config.channelEditor.runningHub.importFailed"));
         } finally {
             setLoading(false);
+        }
+    };
+
+    const addVosr2Preset = () => {
+        try {
+            validateRunningHubImportInput({ apiKey: channel.apiKey, input: RUNNINGHUB_VOSR2_WORKFLOW_ID, explicitKind: "workflow", name: RUNNINGHUB_VOSR2_MODEL_NAME, existingNames: channel.models.map((model) => model.name) });
+            onModelsChange([...channel.models, { name: RUNNINGHUB_VOSR2_MODEL_NAME, capability: "video", runningHub: createRunningHubVosr2Target() }]);
+            message.success(t("config.channelEditor.runningHub.presetAdded"));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : t("config.channelEditor.runningHub.importFailed"));
         }
     };
 
@@ -84,6 +103,16 @@ export function RunningHubTargetManager({ channel, onModelsChange }: { channel: 
                     <Button className="w-full" type="primary" icon={<Download className="size-4" />} loading={loading} onClick={() => void importTarget()}>
                         {t("config.channelEditor.runningHub.import")}
                     </Button>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                <Button icon={<Sparkles className="size-4" />} onClick={addVosr2Preset}>
+                    {t("config.channelEditor.runningHub.addVosr2")}
+                </Button>
+                <div className="min-w-56 flex-1 text-xs leading-5 text-stone-500">
+                    <div>{t("config.channelEditor.runningHub.vosr2Output")}</div>
+                    <div>{t("config.channelEditor.runningHub.vosr2Prerequisite")}</div>
                 </div>
             </div>
 

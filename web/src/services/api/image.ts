@@ -4,11 +4,12 @@ import i18n from "@/i18n";
 import { buildApiUrl, learnRunningHubValidationOptions, resolveModelRequestConfig, resolveModelScript, resolveRunningHubTarget, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { runRunningHubGeneration } from "./runninghub";
+import { requestWanliImage } from "./wanli";
 import { nanoid } from "nanoid";
-import { dataUrlToFile } from "@/lib/image-utils";
+import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
+import { imageSizePresets, inferMediaRatio, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -276,6 +277,16 @@ function parseImagePayload(payload: ImageApiResponse) {
     }
 
     return images;
+}
+
+async function resolveWanliImageResults(images: Array<{ id: string; dataUrl: string }>, config: AiConfig, options?: RequestOptions) {
+    if (config.apiFormat !== "wanli") return images;
+    return Promise.all(images.map(async (image) => {
+        if (!/^https?:\/\//i.test(image.dataUrl)) return image;
+        const response = await axios.get<Blob>(withLocalProxy(image.dataUrl), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
+        const file = new File([response.data], "result", { type: response.data.type || "image/png" });
+        return { ...image, dataUrl: await readFileAsDataUrl(file) };
+    }));
 }
 
 function readApiErrorMessage(value: unknown): string {
@@ -804,7 +815,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             },
         );
         const images = await parseImagePayload(response.data);
-        return images;
+        return resolveWanliImageResults(images, requestConfig, options);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -816,6 +827,19 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, selectedModel);
+    if (requestConfig.apiFormat === "wanli") {
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const quality = config.quality.trim().toLowerCase();
+        const resolution = quality === "high" ? "4K" : quality === "medium" || quality === "hd" ? "2K" : "1K";
+        const blob = await requestWanliImage(requestConfig, {
+            prompt: withSystemPrompt(requestConfig, requestPrompt),
+            ratio: inferMediaRatio(config.size),
+            resolution,
+            images: files,
+            signal: options?.signal,
+        });
+        return [{ id: nanoid(), dataUrl: await readFileAsDataUrl(blob) }];
+    }
     if (requestConfig.apiFormat === "runninghub") {
         const target = resolveRunningHubTarget(config, selectedModel);
         if (!target) throw new Error("RunningHub 生成目标未配置");
@@ -886,7 +910,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
         const images = await parseImagePayload(response.data);
-        return images;
+        return resolveWanliImageResults(images, requestConfig, options);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -940,12 +964,30 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<{ id?: string; name?: string; type?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },
         });
+        const wanliImageModels = new Set([
+            "ft-image-v1-186289ba9d3263010c69372f8939dd94",
+            "ft-image-v1-eb47192eb578f340043911005a06fb6e",
+            "ft-image-v1-3432bdee1a22da4ce8ff2bbfc6ef4c1d",
+            "ft-image-v1-5643c00d4116f22d1abb7d480dee4f68",
+            "ft-image-v1-3ef14ea5c90d0554999403af6e68485e",
+            "ft-image-v1-c8f0a7251222ba36c556bbbb1f84a6a8",
+        ]);
+        const wanliVideoModels = new Set([
+            "ft-video-v1-b8a797753dd4c6bf8e5a69820b293848",
+            "ft-video-v1-99d13a482c1f6f0e71db1e36c4154b70",
+            "fnko_32426c8b51857008933b1e2e85839dc5",
+            "ft-video-v1-756e0feb4b3e1f893726314109762123",
+            "ft-video-v1-451adae35b0c4a3d275c2c46394abc98",
+        ]);
         return (response.data.data || [])
+            .filter((model) => config.apiFormat !== "wanli"
+                || (model.type === "image" && wanliImageModels.has(model.id || ""))
+                || (model.type === "video" && wanliVideoModels.has(model.id || "")))
             .map((model) => model.id)
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));

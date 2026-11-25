@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DreamMaker 账号设置</title>
+<style>body{font:16px system-ui;max-width:720px;margin:64px auto;padding:24px;color:#222;background:#fafafa}button{font:inherit;padding:10px 16px;margin:8px 8px 8px 0;cursor:pointer}p{line-height:1.7}#error{color:#a22}small{color:#666}</style>
+<h1>DreamMaker 账号设置</h1><p>登录一次，由本机代理自动续期。现有画布中的同一账号会直接使用已连接会话，无需重复填写令牌或 API Key。</p>
+<p>点击登录后，在独立的官方窗口输入账号密码并完成验证。密码只交给官方网站，画布不会保存密码。登录成功后官方窗口会自动关闭。</p>
+<p id="status">正在读取账号状态…</p><button id="login">登录账号</button><button id="refresh" hidden>验证自动续期</button><button id="disconnect" hidden>断开连接</button><p id="error"></p>
+<p><small>会话在本机用户目录加密保存，不随画布配置导出。退出账号或服务撤销会话时，需要重新登录；自动续期不会重新提交已有视频任务。</small></p>
+<script>
+const status=document.querySelector('#status'),error=document.querySelector('#error'),buttons=[...document.querySelectorAll('button')];
+async function act(action){buttons.forEach(b=>b.disabled=true);error.textContent='';if(action==='login')status.textContent='请在官方登录窗口完成登录，此页面正在等待…';try{const r=await fetch('/dreammaker/auth/'+action,{method:action==='status'?'GET':'POST'});const d=await r.json();if(!r.ok)throw Error(d.error||'连接失败');status.textContent=d.connected?'已连接账号 '+d.account+' · 自动续期 · 当前访问凭据到期 '+new Date(d.expiresAt).toLocaleString():'尚未连接账号';document.querySelector('#refresh').hidden=!d.connected;document.querySelector('#disconnect').hidden=!d.connected;document.querySelector('#login').textContent=d.connected?'重新登录账号':'登录账号';}catch(e){error.textContent=e.message;}finally{buttons.forEach(b=>b.disabled=false);}}
+buttons.forEach(b=>b.onclick=()=>act(b.id));act('status');
+</script></html>
